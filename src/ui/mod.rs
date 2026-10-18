@@ -1,0 +1,137 @@
+pub mod disc_view;
+pub mod header;
+pub mod help_view;
+pub mod library_view;
+pub mod lyrics_view;
+pub mod queue_view;
+pub mod theme;
+
+use crate::app::{ActiveTab, App};
+use disc_view::DiscView;
+use header::HeaderWidget;
+use help_view::HelpModal;
+use library_view::LibraryView;
+use lyrics_view::LyricsView;
+use queue_view::QueueView;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Paragraph};
+use ratatui::Frame;
+
+pub fn draw(f: &mut Frame, app: &App) {
+    let size = f.area();
+
+    // 1. Fill entire screen with warm chocolate background
+    let bg_block = Block::default().style(Style::default().bg(app.theme.bg));
+    f.render_widget(bg_block, size);
+
+    // 2. Responsive card container (phone/player frame like in the screenshot)
+    // In screenshot: portrait card with rounded aesthetic and chocolate brown background
+    let card_width = 68.min(size.width.saturating_sub(2)).max(28);
+    let card_height = size.height;
+
+    let card_x = size.x + (size.width.saturating_sub(card_width)) / 2;
+    let card_rect = Rect {
+        x: card_x,
+        y: size.y,
+        width: card_width,
+        height: card_height,
+    };
+
+    let card_block = Block::default().style(Style::default().bg(app.theme.card_bg));
+    f.render_widget(card_block, card_rect);
+
+    // 3. Layout inside the card: Header + Main Content + Toast
+    let vertical_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Header & Tabs
+            Constraint::Min(8),    // Body view
+            Constraint::Length(1), // Toast / Status line
+        ])
+        .split(card_rect);
+
+    let header_area = vertical_chunks[0];
+    let body_area = vertical_chunks[1];
+    let toast_area = vertical_chunks[2];
+
+    // Render Header
+    f.render_widget(
+        HeaderWidget {
+            song: app.current_song.as_ref(),
+            active_tab: app.active_tab,
+            theme: &app.theme,
+            volume: app.mpd_status.volume,
+            status_msg: app.status_message.as_deref(),
+        },
+        header_area,
+    );
+
+    // Render Body View according to active tab
+    match app.active_tab {
+        ActiveTab::Player => {
+            f.render_widget(
+                DiscView {
+                    song: app.current_song.as_ref(),
+                    status: &app.mpd_status,
+                    cover_art: &app.cover_art,
+                    rotation_angle: app.rotation_angle,
+                    theme: &app.theme,
+                    is_favorite: app.is_favorite,
+                },
+                body_area,
+            );
+        }
+        ActiveTab::Lyrics => {
+            f.render_widget(
+                LyricsView {
+                    lyrics_mgr: &app.lyrics_mgr,
+                    song: app.current_song.as_ref(),
+                    elapsed: app.mpd_status.elapsed,
+                    scroll_offset: app.lyrics_scroll_offset,
+                    theme: &app.theme,
+                },
+                body_area,
+            );
+        }
+        ActiveTab::Queue => {
+            f.render_widget(
+                QueueView {
+                    playlist: &app.filtered_queue(),
+                    current_song_id: app.current_song.as_ref().map(|s| s.id),
+                    status: &app.mpd_status,
+                    selected_idx: app.queue_selected_idx,
+                    search_query: &app.queue_search_query,
+                    is_searching: app.is_searching,
+                    theme: &app.theme,
+                },
+                body_area,
+            );
+        }
+        ActiveTab::Library => {
+            f.render_widget(
+                LibraryView {
+                    files: &app.filtered_library(),
+                    selected_idx: app.library_selected_idx,
+                    search_query: &app.library_search_query,
+                    is_searching: app.is_searching,
+                    theme: &app.theme,
+                },
+                body_area,
+            );
+        }
+    }
+
+    // Render Toast or status message if present
+    if let Some(msg) = &app.status_message {
+        let toast = Paragraph::new(format!("  {}  ", msg))
+            .style(app.theme.accent_text())
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(toast, toast_area);
+    }
+
+    // Render Help modal popup if toggled
+    if app.show_help {
+        f.render_widget(HelpModal { theme: &app.theme }, size);
+    }
+}
