@@ -1,9 +1,9 @@
 use crate::ui::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 pub struct HelpModal<'a> {
     pub theme: &'a Theme,
@@ -24,17 +24,11 @@ impl<'a> Widget for HelpModal<'a> {
             height: modal_height,
         };
 
-        // Clear background
-        Clear.render(modal_rect, buf);
-
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.accent))
-            .style(Style::default().bg(self.theme.card_bg))
-            .title(Span::styled(
-                " 🎵 Amper Shortcuts 🎵 ",
-                Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD),
-            ))
+            .border_style(self.theme.border_style())
+            .style(Style::default().bg(Color::Reset))
+            .title(Span::styled(" [ SHORTCUTS // CONTROLS ] ", self.theme.accent()))
             .title_alignment(Alignment::Center);
 
         let inner = block.inner(modal_rect);
@@ -42,53 +36,53 @@ impl<'a> Widget for HelpModal<'a> {
 
         let rows = vec![
             Line::from(vec![
-                Span::styled(" [Space]        ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Play / Pause toggle", self.theme.primary_text()),
+                Span::styled(" [Space]        ", self.theme.accent()),
+                Span::styled("Play / Pause toggle", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [←/h] [→/l]    ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Seek -5s / +5s", self.theme.primary_text()),
+                Span::styled(" [←/h] [→/l]    ", self.theme.accent()),
+                Span::styled("Seek -5s / +5s", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [n / >] [p / <]", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Next / Previous track", self.theme.primary_text()),
+                Span::styled(" [n / >] [p / <]", self.theme.accent()),
+                Span::styled("Next / Previous track", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [↑/k] [↓/j]    ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Volume up / down (in Player)", self.theme.primary_text()),
+                Span::styled(" [↑/k] [↓/j]    ", self.theme.accent()),
+                Span::styled("Volume up / down (in Player)", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [r]            ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Toggle Repeat (Off / All)", self.theme.primary_text()),
+                Span::styled(" [r]            ", self.theme.accent()),
+                Span::styled("Toggle Repeat", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [s]            ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Toggle Shuffle / Random", self.theme.primary_text()),
+                Span::styled(" [s]            ", self.theme.accent()),
+                Span::styled("Toggle Shuffle / Random", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [f]            ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Toggle Favorite / Like ♥", self.theme.primary_text()),
+                Span::styled(" [f]            ", self.theme.accent()),
+                Span::styled("Toggle Favorite / Like ♥", self.theme.primary()),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled(" [Tab]          ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Cycle views (Disc/Lyrics/Queue)", self.theme.primary_text()),
+                Span::styled(" [Tab]          ", self.theme.accent()),
+                Span::styled("Cycle views (Player/Lyrics/Queue/Lib)", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [1] [2] [3] [4]", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Jump: Player/Lyrics/Queue/Lib", self.theme.primary_text()),
+                Span::styled(" [1] [2] [3] [4]", self.theme.accent()),
+                Span::styled("Jump to specific view", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [/]            ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Search in Queue or Library", self.theme.primary_text()),
+                Span::styled(" [/]            ", self.theme.accent()),
+                Span::styled("Search in Queue or Library", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [?]            ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Close this Help window", self.theme.primary_text()),
+                Span::styled(" [?]            ", self.theme.accent()),
+                Span::styled("Toggle Help popup", self.theme.primary()),
             ]),
             Line::from(vec![
-                Span::styled(" [q / Esc]      ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Quit Amper", self.theme.primary_text()),
+                Span::styled(" [q / Esc]      ", self.theme.accent()),
+                Span::styled("Quit Amper", self.theme.primary()),
             ]),
         ];
 

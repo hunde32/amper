@@ -29,6 +29,7 @@ pub struct App {
     pub cover_art: CoverArtManager,
     pub lyrics_mgr: LyricsManager,
     pub rotation_angle: f32,
+    pub tick_counter: u64,
 
     pub queue_selected_idx: usize,
     pub queue_search_query: String,
@@ -71,6 +72,7 @@ impl App {
             cover_art,
             lyrics_mgr,
             rotation_angle: 0.0,
+            tick_counter: 0,
 
             queue_selected_idx: 0,
             queue_search_query: String::new(),
@@ -158,6 +160,11 @@ impl App {
         // Animate spinning vinyl when playing
         if self.mpd_status.state == PlaybackState::Play {
             self.rotation_angle = (self.rotation_angle + dt * 1.8) % (std::f32::consts::PI * 2.0);
+        }
+
+        self.tick_counter = self.tick_counter.wrapping_add(1);
+        if self.tick_counter % 60 == 0 {
+            self.theme.reload_if_changed();
         }
 
         // Poll background lyrics fetcher

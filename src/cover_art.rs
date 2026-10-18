@@ -1,20 +1,28 @@
-use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
+use base64::Engine;
+use image::{codecs::png::PngEncoder, ExtendedColorType, GenericImageView, ImageEncoder, ImageReader, RgbaImage};
 use lofty::prelude::*;
 use ratatui::style::Color;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub struct CoverArtManager {
     cached_file: String,
     cached_image: Option<RgbaImage>,
     music_dir: Option<PathBuf>,
+    pub supports_kitty: bool,
 }
 
 impl CoverArtManager {
     pub fn new(music_dir: Option<PathBuf>) -> Self {
+        let supports_kitty = std::env::var("KITTY_WINDOW_ID").is_ok()
+            || std::env::var("KITTY_PID").is_ok()
+            || std::env::var("TERM").map(|t| t.contains("kitty")).unwrap_or(false);
+
         Self {
             cached_file: String::new(),
             cached_image: None,
             music_dir,
+            supports_kitty,
         }
     }
 
@@ -84,31 +92,134 @@ impl CoverArtManager {
         None
     }
 
-    fn prepare_square_image(img: DynamicImage) -> RgbaImage {
+    fn prepare_square_image(img: image::DynamicImage) -> RgbaImage {
         let (w, h) = img.dimensions();
         let size = w.min(h);
         let x_offset = (w - size) / 2;
         let y_offset = (h - size) / 2;
         let cropped = img.crop_imm(x_offset, y_offset, size, size);
-        cropped.resize_exact(256, 256, image::imageops::FilterType::Triangle).to_rgba8()
+        // Resize to 400x400 for high-resolution sampling
+        cropped.resize_exact(400, 400, image::imageops::FilterType::Lanczos3).to_rgba8()
     }
 
-    /// Renders a pixel grid of size width x (height * 2) containing the spinning vinyl record
+    /// Generates a crystal-clear, high-resolution 360x360 PNG of the spinning vinyl record
+    pub fn render_highres_vinyl_png(
+        &self,
+        size_px: u32,
+        angle_rad: f32,
+        theme_accent: Color,
+        _title: &str,
+        _artist: &str,
+    ) -> Option<Vec<u8>> {
+        let mut img = RgbaImage::new(size_px, size_px);
+        let cx = (size_px as f32 - 1.0) / 2.0;
+        let cy = (size_px as f32 - 1.0) / 2.0;
+        let r_outer = cx - 1.5;
+        let r_art = r_outer * 0.62;
+        let r_spindle = r_outer * 0.085;
+        let r_pin = r_outer * 0.035;
+
+        let cos_a = (-angle_rad).cos();
+        let sin_a = (-angle_rad).sin();
+
+        let (acc_r, acc_g, acc_b) = match theme_accent {
+            Color::Rgb(r, g, b) => (r, g, b),
+            _ => (193, 193, 255), // fallback light lavender/blue
+        };
+
+        for py in 0..size_px {
+            let dy = py as f32 - cy;
+            for px in 0..size_px {
+                let dx = px as f32 - cx;
+                let r = (dx * dx + dy * dy).sqrt();
+
+                if r > r_outer {
+                    // Fully transparent background outside the disc!
+                    continue;
+                }
+
+                if r <= r_pin {
+                    // Center metallic spindle pin
+                    let pin_fade = (1.0 - (r / r_pin)).clamp(0.0, 1.0);
+                    let val = (190.0 + pin_fade * 65.0) as u8;
+                    img.put_pixel(px, py, image::Rgba([val, val, val, 255]));
+                } else if r <= r_spindle {
+                    // Spindle hole
+                    img.put_pixel(px, py, image::Rgba([12, 12, 16, 255]));
+                } else if r <= r_art {
+                    // High-res circular label with album cover art (or retro label)
+                    if (r - r_art).abs() < 1.2 {
+                        // Anti-aliased accent border ring
+                        img.put_pixel(px, py, image::Rgba([acc_r, acc_g, acc_b, 255]));
+                    } else if let Some(ref cover) = self.cached_image {
+                        // Bilinear anti-aliased rotation
+                        let rx = dx * cos_a - dy * sin_a;
+                        let ry = dx * sin_a + dy * cos_a;
+
+                        let u = (rx / (2.0 * r_art)) + 0.5;
+                        let v = (ry / (2.0 * r_art)) + 0.5;
+
+                        if u >= 0.0 && u <= 1.0 && v >= 0.0 && v <= 1.0 {
+                            let pixel = sample_bilinear(cover, u, v);
+                            img.put_pixel(px, py, image::Rgba(pixel));
+                        } else {
+                            img.put_pixel(px, py, image::Rgba([20, 20, 26, 255]));
+                        }
+                    } else {
+                        // High-res stylized retro vinyl label matching inspiration image
+                        let ring = ((r * 0.45).sin() * 0.5 + 0.5) * 20.0;
+                        let base = (25.0 + ring) as u8;
+                        let label_r = (base as f32 * 0.9 + acc_r as f32 * 0.15) as u8;
+                        let label_g = (base as f32 * 0.9 + acc_g as f32 * 0.15) as u8;
+                        let label_b = (base as f32 * 0.9 + acc_b as f32 * 0.25) as u8;
+                        img.put_pixel(px, py, image::Rgba([label_r, label_g, label_b, 255]));
+                    }
+                } else {
+                    // High-res vinyl record body with smooth anti-aliased grooves & light sheen
+                    // 1. Concentric micro-grooves
+                    let groove_factor = ((r * 0.95).sin() * 0.5 + 0.5).powf(1.5);
+                    let base_v = 18.0 + groove_factor * 12.0;
+
+                    // 2. Anisotropic light reflection sheen (smooth specular fan at 45 & 225 deg)
+                    let phi = dy.atan2(dx);
+                    let sheen_angle = 0.7853; // ~45 degrees
+                    let delta = phi - sheen_angle;
+                    let sheen = delta.cos().abs().powi(12) * 55.0;
+
+                    // 3. Smooth outer edge anti-aliasing
+                    let edge_alpha = ((r_outer - r) * 1.5).clamp(0.0, 1.0);
+
+                    let vr = ((base_v + sheen * 0.8) as f32 + acc_r as f32 * 0.08).clamp(0.0, 255.0) as u8;
+                    let vg = ((base_v + sheen * 0.8) as f32 + acc_g as f32 * 0.08).clamp(0.0, 255.0) as u8;
+                    let vb = ((base_v + sheen * 1.1) as f32 + acc_b as f32 * 0.12).clamp(0.0, 255.0) as u8;
+                    let alpha = (255.0 * edge_alpha) as u8;
+
+                    img.put_pixel(px, py, image::Rgba([vr, vg, vb, alpha]));
+                }
+            }
+        }
+
+        // Encode to PNG bytes in memory with fast compression
+        let mut png_bytes = Vec::new();
+        let encoder = PngEncoder::new_with_quality(
+            &mut png_bytes,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::NoFilter,
+        );
+        encoder.write_image(&img, size_px, size_px, ExtendedColorType::Rgba8).ok()?;
+
+        Some(png_bytes)
+    }
+
+    /// Half-block fallback renderer (for non-Kitty terminals)
     pub fn render_vinyl_frame(
         &self,
         pixel_width: usize,
         pixel_height: usize,
         angle_rad: f32,
-        card_bg: Color,
-        _title: &str,
-        _artist: &str,
+        _theme_accent: Color,
     ) -> Vec<Vec<Color>> {
-        let bg_rgb = match card_bg {
-            Color::Rgb(r, g, b) => (r, g, b),
-            _ => (28, 17, 12),
-        };
-
-        let mut grid = vec![vec![Color::Rgb(bg_rgb.0, bg_rgb.1, bg_rgb.2); pixel_width]; pixel_height];
+        let mut grid = vec![vec![Color::Reset; pixel_width]; pixel_height];
 
         if pixel_width < 4 || pixel_height < 4 {
             return grid;
@@ -131,23 +242,16 @@ impl CoverArtManager {
                 let r = (dx * dx + dy * dy).sqrt();
 
                 if r > r_outer {
-                    // Background outside vinyl
+                    // Transparent
                     continue;
                 }
 
                 if r <= r_pin {
-                    // Turntable center spindle pin (metallic silver/gold)
-                    grid[py][px] = Color::Rgb(215, 195, 175);
+                    grid[py][px] = Color::Rgb(220, 220, 240);
                 } else if r <= r_spindle {
-                    // Spindle hole (dark hole)
-                    grid[py][px] = Color::Rgb(10, 6, 4);
+                    grid[py][px] = Color::Rgb(15, 15, 20);
                 } else if r <= r_art {
-                    // Circular label with album cover art (or retro label)
-                    if (r - r_art).abs() < 0.9 {
-                        // Bronze label border ring
-                        grid[py][px] = Color::Rgb(140, 95, 65);
-                    } else if let Some(ref cover) = self.cached_image {
-                        // Sample rotated album art
+                    if let Some(ref cover) = self.cached_image {
                         let rx = dx * cos_a - dy * sin_a;
                         let ry = dx * sin_a + dy * cos_a;
 
@@ -155,43 +259,104 @@ impl CoverArtManager {
                         let v = (ry / (2.0 * r_art)) + 0.5;
 
                         if u >= 0.0 && u <= 1.0 && v >= 0.0 && v <= 1.0 {
-                            let img_x = ((u * 255.0).clamp(0.0, 255.0)) as u32;
-                            let img_y = ((v * 255.0).clamp(0.0, 255.0)) as u32;
-                            let pixel = cover.get_pixel(img_x, img_y);
+                            let pixel = sample_bilinear(cover, u, v);
                             grid[py][px] = Color::Rgb(pixel[0], pixel[1], pixel[2]);
                         } else {
-                            grid[py][px] = Color::Rgb(40, 25, 18);
+                            grid[py][px] = Color::Rgb(25, 25, 35);
                         }
                     } else {
-                        // Procedural retro vinyl label when no album art is available
                         let ring = ((r * 1.5).sin() * 0.5 + 0.5) * 15.0;
-                        let label_base = (60.0 + ring) as u8;
-                        grid[py][px] = Color::Rgb(label_base + 35, label_base + 10, label_base - 10);
+                        let b = (40.0 + ring) as u8;
+                        grid[py][px] = Color::Rgb(b, b + 5, b + 20);
                     }
                 } else {
-                    // Vinyl record body with grooves and anisotropic light reflections!
-                    // 1. Concentric micro-grooves
                     let groove_factor = ((r * 2.8).sin() * 0.5 + 0.5).powf(1.4);
-                    let base_v = 15.0 + groove_factor * 12.0;
+                    let base_v = 18.0 + groove_factor * 12.0;
 
-                    // 2. Anisotropic reflection sheen (real vinyl reflects light at ~45 deg)
                     let phi = dy.atan2(dx);
-                    let sheen_angle = 0.7853; // ~45 degrees
-                    let delta = phi - sheen_angle;
-                    let sheen = delta.cos().abs().powi(10) * 45.0;
+                    let sheen = (phi - 0.7853).cos().abs().powi(10) * 45.0;
 
-                    // 3. Outer rim highlight
-                    let rim_boost = if r > r_outer - 1.2 { 30.0 } else { 0.0 };
-
-                    let total_r = (base_v + sheen * 1.1 + rim_boost + 5.0).clamp(0.0, 255.0) as u8;
-                    let total_g = (base_v * 0.7 + sheen * 0.75 + rim_boost * 0.7 + 2.0).clamp(0.0, 255.0) as u8;
-                    let total_b = (base_v * 0.5 + sheen * 0.5 + rim_boost * 0.5).clamp(0.0, 255.0) as u8;
-
-                    grid[py][px] = Color::Rgb(total_r, total_g, total_b);
+                    let total = (base_v + sheen).clamp(0.0, 255.0) as u8;
+                    grid[py][px] = Color::Rgb(total, total, total + 12);
                 }
             }
         }
 
         grid
     }
+}
+
+/// Bilinear interpolation sampler for crystal clear rotating images
+fn sample_bilinear(img: &RgbaImage, u: f32, v: f32) -> [u8; 4] {
+    let w = img.width() as f32;
+    let h = img.height() as f32;
+    let x = (u * w - 0.5).clamp(0.0, w - 1.0);
+    let y = (v * h - 0.5).clamp(0.0, h - 1.0);
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(img.width() - 1);
+    let y1 = (y0 + 1).min(img.height() - 1);
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+
+    let p00 = img.get_pixel(x0, y0).0;
+    let p10 = img.get_pixel(x1, y0).0;
+    let p01 = img.get_pixel(x0, y1).0;
+    let p11 = img.get_pixel(x1, y1).0;
+
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
+        let bot = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
+        out[c] = (top * (1.0 - fy) + bot * fy).round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+/// Transmit and display high-resolution image using Kitty Graphics Protocol
+pub fn send_kitty_image<W: Write>(
+    writer: &mut W,
+    png_bytes: &[u8],
+    col: u16,
+    row: u16,
+    width_cells: u16,
+    height_cells: u16,
+    image_id: u32,
+) -> std::io::Result<()> {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes);
+
+    // Position cursor at 1-indexed (row, col)
+    write!(writer, "\x1b[{};{}H", row + 1, col + 1)?;
+
+    let chunk_size = 4096;
+    let total = b64.len();
+    let mut offset = 0;
+
+    while offset < total {
+        let end = (offset + chunk_size).min(total);
+        let chunk = &b64[offset..end];
+        let is_first = offset == 0;
+        let is_last = end == total;
+        let m = if is_last { 0 } else { 1 };
+
+        if is_first {
+            write!(
+                writer,
+                "\x1b_Ga=T,f=100,t=d,i={},c={},r={},m={},q=2,C=1;{}\x1b\\",
+                image_id, width_cells, height_cells, m, chunk
+            )?;
+        } else {
+            write!(writer, "\x1b_Gm={};{}\x1b\\", m, chunk)?;
+        }
+        offset = end;
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+/// Delete all images displayed via Kitty Graphics Protocol
+pub fn clear_kitty_images<W: Write>(writer: &mut W) -> std::io::Result<()> {
+    write!(writer, "\x1b_Ga=d,d=A,q=2\x1b\\")?;
+    writer.flush()?;
+    Ok(())
 }

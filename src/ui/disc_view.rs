@@ -1,11 +1,13 @@
 use crate::cover_art::CoverArtManager;
 use crate::mpd_client::{MpdStatus, PlaybackState, SongInfo};
+use crate::ui::telemetry::TelemetryWidget;
 use crate::ui::theme::Theme;
+use crate::ui::visualizer::VisualizerWidget;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 pub struct DiscView<'a> {
     pub song: Option<&'a SongInfo>,
@@ -14,62 +16,87 @@ pub struct DiscView<'a> {
     pub rotation_angle: f32,
     pub theme: &'a Theme,
     pub is_favorite: bool,
+    pub tick_counter: u64,
 }
 
 impl<'a> Widget for DiscView<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width < 20 || area.height < 10 {
-            let msg = Paragraph::new("Terminal too small for Disc View")
-                .style(self.theme.muted_text())
+        if area.width < 25 || area.height < 15 {
+            let msg = Paragraph::new("Terminal too small for Player")
+                .style(self.theme.dim())
                 .alignment(Alignment::Center);
             msg.render(area, buf);
             return;
         }
 
-        let main_chunks = Layout::default()
+        let is_playing = self.status.state == PlaybackState::Play;
+
+        // Vertical layout matching the inspiration screenshot:
+        // 1. Audio Visualizer banner (waveform)
+        // 2. Center Vinyl Disc container
+        // 3. Track Title & Artist
+        // 4. Progress bar [||||||||········]
+        // 5. Boxed playback controls [ ⇄ ] [ |<< ] [ || ] [ >>| ] [ ↻ ]
+        // 6. Audio Monitor // Telemetry bottom card
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(8),    // Vinyl Record
-                Constraint::Length(2), // Title & Artist
-                Constraint::Length(1), // Spacer / Actions row
-                Constraint::Length(1), // Timeline Scrubber
-                Constraint::Length(2), // Controls row
+                Constraint::Length(2), // 1. Visualizer
+                Constraint::Min(8),    // 2. Vinyl disc container
+                Constraint::Length(2), // 3. Title & Artist
+                Constraint::Length(1), // 4. Timeline scrubber
+                Constraint::Length(3), // 5. Boxed controls
+                Constraint::Length(6), // 6. Telemetry card
             ])
             .split(area);
 
-        let disc_area = main_chunks[0];
-        let title_area = main_chunks[1];
-        let actions_area = main_chunks[2];
-        let scrubber_area = main_chunks[3];
-        let controls_area = main_chunks[4];
+        let viz_area = chunks[0];
+        let disc_box_area = chunks[1];
+        let title_area = chunks[2];
+        let scrubber_area = chunks[3];
+        let controls_area = chunks[4];
+        let telemetry_area = chunks[5];
 
-        // --- 1. Render Vinyl Record Disc ---
-        // A character cell in standard monospace fonts is ~1:2 (width:height).
-        // Dividing 1 cell into 2 vertical half-block pixels ('▀') yields 1:1 square pixels!
-        let max_cols_by_width = disc_area.width.saturating_sub(2);
-        let max_cols_by_height = (disc_area.height.saturating_sub(1)) * 2;
-        let disc_cols = max_cols_by_width.min(max_cols_by_height).max(6);
+        // --- 1. Symmetrical Waveform Visualizer ---
+        let viz = VisualizerWidget {
+            is_playing,
+            tick_counter: self.tick_counter,
+            theme: self.theme,
+            sample_rate: "MPD 44.1 kHz",
+        };
+        viz.render(viz_area, buf);
+
+        // --- 2. Vinyl Record Container Card ---
+        let disc_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(self.theme.border_style())
+            .style(Style::default().bg(ratatui::style::Color::Reset));
+        let disc_inner = disc_block.inner(disc_box_area);
+        disc_block.render(disc_box_area, buf);
+
+        // Calculate disc dimensions inside container
+        let max_cols = disc_inner.width.saturating_sub(2);
+        let max_rows = disc_inner.height;
+        let disc_cols = max_cols.min(max_rows * 2).max(6);
         let disc_rows = (disc_cols / 2).max(3);
 
-        let disc_x = disc_area.x + (disc_area.width.saturating_sub(disc_cols)) / 2;
-        let disc_y = disc_area.y + (disc_area.height.saturating_sub(disc_rows)) / 2;
-
-        let pixel_width = disc_cols as usize;
-        let pixel_height = (disc_rows * 2) as usize;
+        let disc_x = disc_inner.x + (disc_inner.width.saturating_sub(disc_cols)) / 2;
+        let disc_y = disc_inner.y + (disc_inner.height.saturating_sub(disc_rows)) / 2;
 
         let (title_str, artist_str) = if let Some(s) = self.song {
             (s.display_title(), s.display_artist())
         } else {
-            ("Amper".to_string(), "MPD Music Player".to_string())
+            ("In The Soul".to_string(), "MPD".to_string())
         };
 
+        // If not using Kitty graphics or as fallback background:
+        let pixel_width = disc_cols as usize;
+        let pixel_height = (disc_rows * 2) as usize;
         let vinyl_frame = self.cover_art.render_vinyl_frame(
             pixel_width,
             pixel_height,
             self.rotation_angle,
-            self.theme.card_bg,
-            &title_str,
-            &artist_str,
+            self.theme.accent,
         );
 
         for r in 0..disc_rows {
@@ -77,13 +104,13 @@ impl<'a> Widget for DiscView<'a> {
             let py_bot = (r * 2 + 1) as usize;
             let cur_y = disc_y + r;
 
-            if cur_y >= disc_area.y + disc_area.height {
+            if cur_y >= disc_inner.y + disc_inner.height {
                 break;
             }
 
             for c in 0..disc_cols {
                 let cur_x = disc_x + c;
-                if cur_x >= disc_area.x + disc_area.width {
+                if cur_x >= disc_inner.x + disc_inner.width {
                     break;
                 }
 
@@ -97,70 +124,25 @@ impl<'a> Widget for DiscView<'a> {
             }
         }
 
-        // --- 2. Track Title & Artist ---
+        // --- 3. Track Title & Artist ---
+        let title_line = Line::from(vec![Span::styled(
+            &title_str,
+            self.theme.primary_bold(),
+        )]);
+        let artist_line = Line::from(vec![Span::styled(
+            &artist_str,
+            self.theme.secondary(),
+        )]);
+
         let title_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Length(1)])
             .split(title_area);
 
-        let title_line = Line::from(vec![Span::styled(
-            &title_str,
-            Style::default()
-                .fg(self.theme.text_primary)
-                .add_modifier(Modifier::BOLD),
-        )]);
-        Paragraph::new(title_line)
-            .alignment(Alignment::Center)
-            .render(title_chunks[0], buf);
+        Paragraph::new(title_line).alignment(Alignment::Center).render(title_chunks[0], buf);
+        Paragraph::new(artist_line).alignment(Alignment::Center).render(title_chunks[1], buf);
 
-        let artist_line = Line::from(vec![Span::styled(
-            &artist_str,
-            Style::default().fg(self.theme.text_secondary),
-        )]);
-        Paragraph::new(artist_line)
-            .alignment(Alignment::Center)
-            .render(title_chunks[1], buf);
-
-        // --- 3. Actions Row (Heart / Like, Repeat, Shuffle, Volume) ---
-        let heart_span = if self.is_favorite {
-            Span::styled(" ♥ Liked ", Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD))
-        } else {
-            Span::styled(" ♡ Like ", Style::default().fg(self.theme.text_muted))
-        };
-
-        let repeat_span = if self.status.repeat {
-            Span::styled(" 🔁 Repeat ", Style::default().fg(self.theme.accent))
-        } else {
-            Span::styled(" ⇄ Loop ", Style::default().fg(self.theme.text_muted))
-        };
-
-        let shuffle_span = if self.status.random {
-            Span::styled(" 🔀 Random ", Style::default().fg(self.theme.accent))
-        } else {
-            Span::styled(" ⤮ Order ", Style::default().fg(self.theme.text_muted))
-        };
-
-        let vol_str = if self.status.volume >= 0 {
-            format!(" 🎚️ {}% ", self.status.volume)
-        } else {
-            " 🎚️ -- ".to_string()
-        };
-        let vol_span = Span::styled(vol_str, Style::default().fg(self.theme.text_secondary));
-
-        let actions_line = Line::from(vec![
-            heart_span,
-            Span::raw("    "),
-            repeat_span,
-            Span::raw("    "),
-            shuffle_span,
-            Span::raw("    "),
-            vol_span,
-        ]);
-        Paragraph::new(actions_line)
-            .alignment(Alignment::Center)
-            .render(actions_area, buf);
-
-        // --- 4. Scrubber / Timeline Bar ---
+        // --- 4. Scrubber / Progress Bar matching inspiration: 0:05 [||||||······] 3:00 ---
         let elapsed = self.status.elapsed;
         let duration = self.status.duration.max(0.1);
         let progress = (elapsed / duration).clamp(0.0, 1.0);
@@ -168,63 +150,65 @@ impl<'a> Widget for DiscView<'a> {
         let elapsed_str = format_time(elapsed);
         let duration_str = format_time(duration);
 
-        let elapsed_len = elapsed_str.len() as u16;
-        let duration_len = duration_str.len() as u16;
+        let time_width = (elapsed_str.len() + duration_str.len() + 6) as u16;
+        let bar_width = (scrubber_area.width.saturating_sub(time_width) as usize).max(4);
 
-        let bar_margin = 4u16;
-        let scrubber_width = scrubber_area.width.saturating_sub(bar_margin * 2);
+        let filled_count = ((progress * bar_width as f64).round() as usize).min(bar_width);
+        let unfilled_count = bar_width.saturating_sub(filled_count);
 
-        if scrubber_width > elapsed_len + duration_len + 6 {
-            let track_width = scrubber_width.saturating_sub(elapsed_len + duration_len + 4) as usize;
-            let knob_pos = ((progress * track_width as f64).round() as usize).min(track_width.saturating_sub(1));
+        let filled_bar = "|".repeat(filled_count);
+        let unfilled_bar = "·".repeat(unfilled_count);
 
-            let filled_part: String = "━".repeat(knob_pos);
-            let knob_str = "●";
-            let empty_part: String = "─".repeat(track_width.saturating_sub(knob_pos + 1));
-
-            let scrubber_line = Line::from(vec![
-                Span::styled(format!("{}  ", elapsed_str), Style::default().fg(self.theme.text_muted)),
-                Span::styled(filled_part, Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled(knob_str, Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled(empty_part, Style::default().fg(self.theme.pill_bg)),
-                Span::styled(format!("  {}", duration_str), Style::default().fg(self.theme.text_muted)),
-            ]);
-
-            Paragraph::new(scrubber_line)
-                .alignment(Alignment::Center)
-                .render(scrubber_area, buf);
-        }
-
-        // --- 5. Playback Controls Row ---
-        let is_playing = self.status.state == PlaybackState::Play;
-        let play_btn_text = if is_playing { "  ⏸  " } else { "  ▶  " };
-
-        let repeat_icon = if self.status.repeat { " 🔁 " } else { " ⇄ " };
-        let prev_icon = " ⏮ ";
-        let next_icon = " ⏭ ";
-        let queue_icon = " ☰ ";
-
-        let btn_style = Style::default().fg(self.theme.text_primary).bg(self.theme.control_bg);
-        let play_btn_style = Style::default()
-            .fg(self.theme.text_primary)
-            .bg(self.theme.accent)
-            .add_modifier(Modifier::BOLD);
-
-        let controls_line = Line::from(vec![
-            Span::styled(repeat_icon, btn_style),
-            Span::raw("    "),
-            Span::styled(prev_icon, btn_style),
-            Span::raw("   "),
-            Span::styled(play_btn_text, play_btn_style),
-            Span::raw("   "),
-            Span::styled(next_icon, btn_style),
-            Span::raw("    "),
-            Span::styled(queue_icon, btn_style),
+        let scrubber_line = Line::from(vec![
+            Span::styled(format!("{} [", elapsed_str), self.theme.dim()),
+            Span::styled(filled_bar, self.theme.accent()),
+            Span::styled(unfilled_bar, self.theme.dim()),
+            Span::styled(format!("] {}", duration_str), self.theme.dim()),
         ]);
 
-        Paragraph::new(controls_line)
-            .alignment(Alignment::Center)
-            .render(controls_area, buf);
+        Paragraph::new(scrubber_line).alignment(Alignment::Center).render(scrubber_area, buf);
+
+        // --- 5. Boxed Cyberpunk Controls matching inspiration image ---
+        //  ┌───┐   ┌─────┐   ┌──────┐   ┌─────┐   ┌───┐
+        //  │ ⇄ │   │ |<< │   │  ||  │   │ >>| │   │ ↻ │
+        //  └───┘   └─────┘   └──────┘   └─────┘   └───┘
+        let repeat_icon = if self.status.repeat { " 🔁 " } else { " ⇄ " };
+        let play_icon = if is_playing { "  ||  " } else { "  ▶   " };
+        let prev_icon = " |<< ";
+        let next_icon = " >>| ";
+        let queue_icon = " ↻ ";
+
+        let row1 = Line::from(vec![
+            Span::styled("┌───┐   ┌─────┐   ┌──────┐   ┌─────┐   ┌───┐", self.theme.border_style()),
+        ]);
+        let row2 = Line::from(vec![
+            Span::styled("│", self.theme.border_style()),
+            Span::styled(repeat_icon, if self.status.repeat { self.theme.accent() } else { self.theme.secondary() }),
+            Span::styled("│   │", self.theme.border_style()),
+            Span::styled(prev_icon, self.theme.primary_bold()),
+            Span::styled("│   │", self.theme.border_style()),
+            Span::styled(play_icon, self.theme.accent()),
+            Span::styled("│   │", self.theme.border_style()),
+            Span::styled(next_icon, self.theme.primary_bold()),
+            Span::styled("│   │", self.theme.border_style()),
+            Span::styled(queue_icon, self.theme.secondary()),
+            Span::styled("│", self.theme.border_style()),
+        ]);
+        let row3 = Line::from(vec![
+            Span::styled("└───┘   └─────┘   └──────┘   └─────┘   └───┘", self.theme.border_style()),
+        ]);
+
+        let controls_lines = vec![row1, row2, row3];
+        Paragraph::new(controls_lines).alignment(Alignment::Center).render(controls_area, buf);
+
+        // --- 6. Telemetry Status Card ---
+        let telemetry = TelemetryWidget {
+            song: self.song,
+            status: self.status,
+            theme: self.theme,
+            tick_counter: self.tick_counter,
+        };
+        telemetry.render(telemetry_area, buf);
     }
 }
 

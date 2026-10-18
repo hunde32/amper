@@ -4,7 +4,9 @@ pub mod help_view;
 pub mod library_view;
 pub mod lyrics_view;
 pub mod queue_view;
+pub mod telemetry;
 pub mod theme;
+pub mod visualizer;
 
 use crate::app::{ActiveTab, App};
 use disc_view::DiscView;
@@ -14,20 +16,14 @@ use library_view::LibraryView;
 use lyrics_view::LyricsView;
 use queue_view::QueueView;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let size = f.area();
 
-    // 1. Fill entire screen with warm chocolate background
-    let bg_block = Block::default().style(Style::default().bg(app.theme.bg));
-    f.render_widget(bg_block, size);
-
-    // 2. Responsive card container (phone/player frame like in the screenshot)
-    // In screenshot: portrait card with rounded aesthetic and chocolate brown background
-    let card_width = 68.min(size.width.saturating_sub(2)).max(28);
+    // Responsive centered container (no solid background fill, 100% transparent to terminal!)
+    let card_width = 72.min(size.width.saturating_sub(2)).max(28);
     let card_height = size.height;
 
     let card_x = size.x + (size.width.saturating_sub(card_width)) / 2;
@@ -38,15 +34,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         height: card_height,
     };
 
-    let card_block = Block::default().style(Style::default().bg(app.theme.card_bg));
-    f.render_widget(card_block, card_rect);
-
-    // 3. Layout inside the card: Header + Main Content + Toast
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header & Tabs
-            Constraint::Min(8),    // Body view
+            Constraint::Length(1), // Top Header (Tabs + Like)
+            Constraint::Min(10),   // Main View (Disc / Lyrics / Queue / Lib)
             Constraint::Length(1), // Toast / Status line
         ])
         .split(card_rect);
@@ -55,19 +47,18 @@ pub fn draw(f: &mut Frame, app: &App) {
     let body_area = vertical_chunks[1];
     let toast_area = vertical_chunks[2];
 
-    // Render Header
+    // 1. Top Header Bar
     f.render_widget(
         HeaderWidget {
             song: app.current_song.as_ref(),
             active_tab: app.active_tab,
             theme: &app.theme,
-            volume: app.mpd_status.volume,
-            status_msg: app.status_message.as_deref(),
+            is_favorite: app.is_favorite,
         },
         header_area,
     );
 
-    // Render Body View according to active tab
+    // 2. Body View according to active tab
     match app.active_tab {
         ActiveTab::Player => {
             f.render_widget(
@@ -78,6 +69,7 @@ pub fn draw(f: &mut Frame, app: &App) {
                     rotation_angle: app.rotation_angle,
                     theme: &app.theme,
                     is_favorite: app.is_favorite,
+                    tick_counter: app.tick_counter,
                 },
                 body_area,
             );
@@ -122,15 +114,15 @@ pub fn draw(f: &mut Frame, app: &App) {
         }
     }
 
-    // Render Toast or status message if present
+    // 3. Status Toast if present
     if let Some(msg) = &app.status_message {
         let toast = Paragraph::new(format!("  {}  ", msg))
-            .style(app.theme.accent_text())
+            .style(app.theme.accent())
             .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(toast, toast_area);
     }
 
-    // Render Help modal popup if toggled
+    // 4. Help modal if toggled
     if app.show_help {
         f.render_widget(HelpModal { theme: &app.theme }, size);
     }
