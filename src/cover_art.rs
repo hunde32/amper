@@ -211,6 +211,135 @@ impl CoverArtManager {
         Some(png_bytes)
     }
 
+    /// Generates a static square high-resolution PNG of the album art (no spinning, crisp and still)
+    pub fn render_highres_cover_png(
+        &self,
+        size_px: u32,
+        theme_accent: Color,
+        _title: &str,
+        _artist: &str,
+    ) -> Option<Vec<u8>> {
+        let mut img = RgbaImage::new(size_px, size_px);
+        let corner_radius = (size_px as f32 * 0.05).max(6.0);
+
+        let (acc_r, acc_g, acc_b) = match theme_accent {
+            Color::Rgb(r, g, b) => (r, g, b),
+            _ => (193, 193, 255),
+        };
+
+        let w_f = size_px as f32;
+        let h_f = size_px as f32;
+
+        for py in 0..size_px {
+            let y = py as f32;
+            for px in 0..size_px {
+                let x = px as f32;
+
+                // Rounded corner test
+                let dx = if x < corner_radius {
+                    corner_radius - x
+                } else if x > w_f - 1.0 - corner_radius {
+                    x - (w_f - 1.0 - corner_radius)
+                } else {
+                    0.0
+                };
+
+                let dy = if y < corner_radius {
+                    corner_radius - y
+                } else if y > h_f - 1.0 - corner_radius {
+                    y - (h_f - 1.0 - corner_radius)
+                } else {
+                    0.0
+                };
+
+                let corner_dist = (dx * dx + dy * dy).sqrt();
+                if corner_dist > corner_radius {
+                    // Transparent outside rounded corner
+                    continue;
+                }
+
+                let alpha = (1.0 - (corner_dist - (corner_radius - 1.0)).clamp(0.0, 1.0)) * 255.0;
+
+                // Border edge highlight
+                let is_border = x <= 1.5 || x >= w_f - 2.5 || y <= 1.5 || y >= h_f - 2.5
+                    || (corner_dist > corner_radius - 2.0);
+
+                if let Some(ref cover) = self.cached_image {
+                    let u = x / (w_f - 1.0);
+                    let v = y / (h_f - 1.0);
+                    let mut pixel = sample_bilinear(cover, u, v);
+                    pixel[3] = alpha as u8;
+
+                    if is_border {
+                        // Subtle blend with accent border
+                        pixel[0] = ((pixel[0] as f32 * 0.7) + (acc_r as f32 * 0.3)) as u8;
+                        pixel[1] = ((pixel[1] as f32 * 0.7) + (acc_g as f32 * 0.3)) as u8;
+                        pixel[2] = ((pixel[2] as f32 * 0.7) + (acc_b as f32 * 0.3)) as u8;
+                    }
+
+                    img.put_pixel(px, py, image::Rgba(pixel));
+                } else {
+                    // Stylized retro synth placeholder card
+                    let grid_line = (px % 24 == 0) || (py % 24 == 0);
+                    let base_v = if grid_line { 38u8 } else { 22u8 };
+                    let pixel = if is_border {
+                        image::Rgba([acc_r, acc_g, acc_b, alpha as u8])
+                    } else {
+                        image::Rgba([base_v, base_v, base_v + 12, alpha as u8])
+                    };
+                    img.put_pixel(px, py, pixel);
+                }
+            }
+        }
+
+        let mut png_bytes = Vec::new();
+        let encoder = PngEncoder::new_with_quality(
+            &mut png_bytes,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::NoFilter,
+        );
+        encoder.write_image(&img, size_px, size_px, ExtendedColorType::Rgba8).ok()?;
+
+        Some(png_bytes)
+    }
+
+    /// Static half-block fallback renderer for non-Kitty terminals
+    pub fn render_static_frame(
+        &self,
+        pixel_width: usize,
+        pixel_height: usize,
+        theme_accent: Color,
+    ) -> Vec<Vec<Color>> {
+        let mut grid = vec![vec![Color::Reset; pixel_width]; pixel_height];
+        if pixel_width < 4 || pixel_height < 4 {
+            return grid;
+        }
+
+        let w_f = (pixel_width - 1) as f32;
+        let h_f = (pixel_height - 1) as f32;
+
+        for py in 0..pixel_height {
+            let v = py as f32 / h_f;
+            for px in 0..pixel_width {
+                let u = px as f32 / w_f;
+
+                if let Some(ref cover) = self.cached_image {
+                    let pixel = sample_bilinear(cover, u, v);
+                    grid[py][px] = Color::Rgb(pixel[0], pixel[1], pixel[2]);
+                } else {
+                    let border = px == 0 || px == pixel_width - 1 || py == 0 || py == pixel_height - 1;
+                    if border {
+                        grid[py][px] = theme_accent;
+                    } else {
+                        grid[py][px] = Color::Rgb(25, 25, 35);
+                    }
+                }
+            }
+        }
+
+        grid
+    }
+
     /// Half-block fallback renderer (for non-Kitty terminals)
     pub fn render_vinyl_frame(
         &self,

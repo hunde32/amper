@@ -70,6 +70,10 @@ pub fn draw(f: &mut Frame, app: &App) {
                     theme: &app.theme,
                     is_favorite: app.is_favorite,
                     tick_counter: app.tick_counter,
+                    cover_mode: app.cover_mode,
+                    bottom_mode: app.bottom_mode,
+                    lyrics_mgr: &app.lyrics_mgr,
+                    clicked_button: app.clicked_button,
                 },
                 body_area,
             );

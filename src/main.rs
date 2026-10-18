@@ -80,13 +80,23 @@ fn main() -> Result<()> {
                     ("In The Soul".to_string(), "MPD".to_string())
                 };
 
-                if let Some(png) = app.cover_art.render_highres_vinyl_png(
-                    360,
-                    app.rotation_angle,
-                    app.theme.accent,
-                    &t_str,
-                    &a_str,
-                ) {
+                let png_opt = match app.cover_mode {
+                    app::CoverMode::StaticCard => app.cover_art.render_highres_cover_png(
+                        360,
+                        app.theme.accent,
+                        &t_str,
+                        &a_str,
+                    ),
+                    app::CoverMode::SpinningVinyl => app.cover_art.render_highres_vinyl_png(
+                        360,
+                        app.rotation_angle,
+                        app.theme.accent,
+                        &t_str,
+                        &a_str,
+                    ),
+                };
+
+                if let Some(png) = png_opt {
                     let mut stdout_handle = std::io::stdout().lock();
                     let _ = cover_art::send_kitty_image(
                         &mut stdout_handle,

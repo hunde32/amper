@@ -13,9 +13,25 @@ pub enum ActiveTab {
     Library,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverMode {
+    StaticCard,
+    SpinningVinyl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BottomPanelMode {
+    Telemetry,
+    Visualizer,
+    MiniLyrics,
+    Metadata,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub active_tab: ActiveTab,
+    pub cover_mode: CoverMode,
+    pub bottom_mode: BottomPanelMode,
     pub show_help: bool,
     pub is_favorite: bool,
     pub theme: Theme,
@@ -30,6 +46,7 @@ pub struct App {
     pub lyrics_mgr: LyricsManager,
     pub rotation_angle: f32,
     pub tick_counter: u64,
+    pub clicked_button: Option<(&'static str, Instant)>,
 
     pub queue_selected_idx: usize,
     pub queue_search_query: String,
@@ -59,6 +76,8 @@ impl App {
         let mut app = Self {
             should_quit: false,
             active_tab: ActiveTab::Player,
+            cover_mode: CoverMode::StaticCard,
+            bottom_mode: BottomPanelMode::Telemetry,
             show_help: false,
             is_favorite: false,
             theme: Theme::new(),
@@ -73,6 +92,7 @@ impl App {
             lyrics_mgr,
             rotation_angle: 0.0,
             tick_counter: 0,
+            clicked_button: None,
 
             queue_selected_idx: 0,
             queue_search_query: String::new(),
@@ -274,15 +294,18 @@ impl App {
 
             // Playback controls
             KeyCode::Char(' ') => {
+                self.clicked_button = Some(("play", Instant::now()));
                 let _ = self.mpd.toggle_pause();
                 self.refresh_mpd(false);
             }
             KeyCode::Char('n') | KeyCode::Char('>') => {
+                self.clicked_button = Some(("next", Instant::now()));
                 let _ = self.mpd.next();
                 self.set_status_message("Next track");
                 self.refresh_mpd(false);
             }
             KeyCode::Char('p') | KeyCode::Char('<') => {
+                self.clicked_button = Some(("prev", Instant::now()));
                 let _ = self.mpd.previous();
                 self.set_status_message("Previous track");
                 self.refresh_mpd(false);
@@ -306,16 +329,44 @@ impl App {
                 self.refresh_mpd(false);
             }
             KeyCode::Char('r') => {
+                self.clicked_button = Some(("repeat", Instant::now()));
                 let _ = self.mpd.toggle_repeat();
                 self.refresh_mpd(false);
                 let mode = if self.mpd_status.repeat { "On" } else { "Off" };
                 self.set_status_message(&format!("Repeat: {}", mode));
             }
             KeyCode::Char('s') => {
+                self.clicked_button = Some(("shuffle", Instant::now()));
                 let _ = self.mpd.toggle_random();
                 self.refresh_mpd(false);
                 let mode = if self.mpd_status.random { "On" } else { "Off" };
                 self.set_status_message(&format!("Shuffle: {}", mode));
+            }
+            KeyCode::Char('v') => {
+                self.cover_mode = match self.cover_mode {
+                    CoverMode::StaticCard => CoverMode::SpinningVinyl,
+                    CoverMode::SpinningVinyl => CoverMode::StaticCard,
+                };
+                let name = match self.cover_mode {
+                    CoverMode::StaticCard => "Static Cover Art",
+                    CoverMode::SpinningVinyl => "Spinning Vinyl Record",
+                };
+                self.set_status_message(&format!("Cover Display: {}", name));
+            }
+            KeyCode::Char('m') | KeyCode::Char('b') => {
+                self.bottom_mode = match self.bottom_mode {
+                    BottomPanelMode::Telemetry => BottomPanelMode::Visualizer,
+                    BottomPanelMode::Visualizer => BottomPanelMode::MiniLyrics,
+                    BottomPanelMode::MiniLyrics => BottomPanelMode::Metadata,
+                    BottomPanelMode::Metadata => BottomPanelMode::Telemetry,
+                };
+                let name = match self.bottom_mode {
+                    BottomPanelMode::Telemetry => "Audio Monitor // Telemetry",
+                    BottomPanelMode::Visualizer => "Spectrum // Visualizer",
+                    BottomPanelMode::MiniLyrics => "Live Synchronized Lyrics",
+                    BottomPanelMode::Metadata => "Track Details // Metadata",
+                };
+                self.set_status_message(&format!("Bottom Panel: {}", name));
             }
             KeyCode::Char('f') => {
                 self.is_favorite = !self.is_favorite;
@@ -429,14 +480,54 @@ impl App {
 
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            // Check top tab clicks roughly
-            if mouse.row == 1 {
-                self.active_tab = match self.active_tab {
-                    ActiveTab::Player => ActiveTab::Lyrics,
-                    ActiveTab::Lyrics => ActiveTab::Queue,
-                    ActiveTab::Queue => ActiveTab::Library,
-                    ActiveTab::Library => ActiveTab::Player,
-                };
+            // 1. Top Header clicks
+            if mouse.row <= 1 {
+                if mouse.column >= 12 && mouse.column <= 19 {
+                    self.active_tab = ActiveTab::Player;
+                } else if mouse.column >= 20 && mouse.column <= 28 {
+                    self.active_tab = ActiveTab::Lyrics;
+                } else if mouse.column >= 29 && mouse.column <= 36 {
+                    self.active_tab = ActiveTab::Queue;
+                } else if mouse.column >= 37 && mouse.column <= 43 {
+                    self.active_tab = ActiveTab::Library;
+                } else if mouse.column >= 44 && mouse.column <= 55 {
+                    self.is_favorite = !self.is_favorite;
+                    let msg = if self.is_favorite { "Added to Liked Songs ♥" } else { "Removed from Liked Songs" };
+                    self.set_status_message(msg);
+                } else if mouse.column >= 56 {
+                    self.show_help = !self.show_help;
+                }
+                return;
+            }
+
+            // 2. Player Controls clicks
+            if self.active_tab == ActiveTab::Player {
+                // If clicked near the bottom panel header: cycle bottom mode
+                // Otherwise if clicked on controls:
+                let col = mouse.column;
+                if col >= 30 && col <= 44 {
+                    self.clicked_button = Some(("play", Instant::now()));
+                    let _ = self.mpd.toggle_pause();
+                    self.refresh_mpd(false);
+                } else if col >= 21 && col <= 29 {
+                    self.clicked_button = Some(("prev", Instant::now()));
+                    let _ = self.mpd.previous();
+                    self.set_status_message("Previous track");
+                    self.refresh_mpd(false);
+                } else if col >= 45 && col <= 53 {
+                    self.clicked_button = Some(("next", Instant::now()));
+                    let _ = self.mpd.next();
+                    self.set_status_message("Next track");
+                    self.refresh_mpd(false);
+                } else if col >= 13 && col <= 20 {
+                    self.clicked_button = Some(("repeat", Instant::now()));
+                    let _ = self.mpd.toggle_repeat();
+                    self.refresh_mpd(false);
+                } else if col >= 54 && col <= 61 {
+                    self.clicked_button = Some(("shuffle", Instant::now()));
+                    let _ = self.mpd.toggle_random();
+                    self.refresh_mpd(false);
+                }
             }
         }
     }

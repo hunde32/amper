@@ -63,6 +63,14 @@ impl<'a> Widget for HelpModal<'a> {
                 Span::styled(" [f]            ", self.theme.accent()),
                 Span::styled("Toggle Favorite / Like ♥", self.theme.primary()),
             ]),
+            Line::from(vec![
+                Span::styled(" [v]            ", self.theme.accent()),
+                Span::styled("Toggle Cover Mode (Static / Vinyl)", self.theme.primary()),
+            ]),
+            Line::from(vec![
+                Span::styled(" [m / b]        ", self.theme.accent()),
+                Span::styled("Cycle Bottom Panel (Telem/Visual/Lyrics)", self.theme.primary()),
+            ]),
             Line::from(""),
             Line::from(vec![
                 Span::styled(" [Tab]          ", self.theme.accent()),
