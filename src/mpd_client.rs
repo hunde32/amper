@@ -396,6 +396,7 @@ impl MpdClient {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn pause(&mut self) -> Result<()> {
         self.send_command("pause 1")?;
         Ok(())
@@ -497,10 +498,9 @@ impl MpdClient {
 
             let mut reader = BufReader::new(&mut *stream);
             let mut line = String::new();
-            let mut chunk_size = 0usize;
             let mut total_size = 0usize;
 
-            loop {
+            let chunk_size = loop {
                 line.clear();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     return None;
@@ -509,14 +509,13 @@ impl MpdClient {
                 if trimmed.starts_with("size: ") {
                     total_size = trimmed[6..].parse().unwrap_or(0);
                 } else if trimmed.starts_with("binary: ") {
-                    chunk_size = trimmed[8..].parse().unwrap_or(0);
-                    break;
+                    break trimmed[8..].parse().unwrap_or(0);
                 } else if trimmed == "OK" {
                     return if image_bytes.is_empty() { None } else { Some(image_bytes) };
                 } else if trimmed.starts_with("ACK ") {
                     return None;
                 }
-            }
+            };
 
             if chunk_size == 0 {
                 break;

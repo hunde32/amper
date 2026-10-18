@@ -12,10 +12,22 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::backend::CrosstermBackend;
+use ratatui::style::Color;
 use ratatui::Terminal;
-use std::io::{stdout, Write};
+use std::io::stdout;
 use std::panic;
 use std::time::{Duration, Instant};
+
+#[derive(PartialEq, Eq)]
+struct KittyCacheKey {
+    song_file: String,
+    cover_mode: app::CoverMode,
+    img_x: u16,
+    img_y: u16,
+    img_cols: u16,
+    img_rows: u16,
+    accent: (u8, u8, u8),
+}
 
 fn main() -> Result<()> {
     // Setup panic hook to restore terminal
@@ -38,41 +50,25 @@ fn main() -> Result<()> {
 
     let mut app = App::new();
 
-    let tick_rate = Duration::from_millis(33); // ~30 FPS for smooth vinyl rotation
+    let tick_rate = Duration::from_millis(33); // ~30 FPS
     let mut last_tick = Instant::now();
-    let mut was_player = true;
+    let mut last_kitty_key: Option<KittyCacheKey> = None;
+    let mut last_vinyl_render = Instant::now();
+    let mut last_was_player = false;
 
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
 
-        // In Kitty terminal: render the crystal-clear high resolution spinning vinyl PNG!
+        // In Kitty terminal: render the crystal-clear high resolution PNG
         if app.cover_art.supports_kitty {
             if app.active_tab == ActiveTab::Player && !app.show_help {
                 let size = terminal.size()?;
-                let card_width = 72.min(size.width.saturating_sub(2)).max(28);
-                let card_x = (size.width.saturating_sub(card_width)) / 2;
+                let geom = App::get_cover_geometry(size.into());
 
-                // Container box inside card:
-                // header: 1 line
-                // visualizer: 2 lines
-                // box starts at y = 3
-                let disc_box_y = 3u16;
-                let available_h = size.height.saturating_sub(15).max(6);
-                let disc_box_h = available_h;
-                let disc_box_w = card_width;
-
-                let disc_inner_x = card_x + 1;
-                let disc_inner_y = disc_box_y + 1;
-                let disc_inner_w = disc_box_w.saturating_sub(2);
-                let disc_inner_h = disc_box_h.saturating_sub(2);
-
-                let max_cols = disc_inner_w.saturating_sub(2);
-                let max_rows = disc_inner_h;
-                let disc_cols = max_cols.min(max_rows * 2).max(6);
-                let disc_rows = (disc_cols / 2).max(3);
-
-                let disc_x = disc_inner_x + (disc_inner_w.saturating_sub(disc_cols)) / 2;
-                let disc_y = disc_inner_y + (disc_inner_h.saturating_sub(disc_rows)) / 2;
+                let disc_x = geom.img_x;
+                let disc_y = geom.img_y;
+                let disc_cols = geom.img_cols;
+                let disc_rows = geom.img_rows;
 
                 let (t_str, a_str) = if let Some(ref s) = app.current_song {
                     (s.display_title(), s.display_artist())
@@ -80,39 +76,106 @@ fn main() -> Result<()> {
                     ("In The Soul".to_string(), "MPD".to_string())
                 };
 
-                let png_opt = match app.cover_mode {
-                    app::CoverMode::StaticCard => app.cover_art.render_highres_cover_png(
-                        360,
-                        app.theme.accent,
-                        &t_str,
-                        &a_str,
-                    ),
-                    app::CoverMode::SpinningVinyl => app.cover_art.render_highres_vinyl_png(
-                        360,
-                        app.rotation_angle,
-                        app.theme.accent,
-                        &t_str,
-                        &a_str,
-                    ),
+                let accent_rgb = match app.theme.accent {
+                    Color::Rgb(r, g, b) => (r, g, b),
+                    _ => (193, 193, 255),
                 };
 
-                if let Some(png) = png_opt {
-                    let mut stdout_handle = std::io::stdout().lock();
-                    let _ = cover_art::send_kitty_image(
-                        &mut stdout_handle,
-                        &png,
-                        disc_x,
-                        disc_y,
-                        disc_cols,
-                        disc_rows,
-                        1,
-                    );
+                let song_file = app.current_song.as_ref().map(|s| s.file.clone()).unwrap_or_default();
+
+                match app.cover_mode {
+                    app::CoverMode::StaticCard => {
+                        let current_key = KittyCacheKey {
+                            song_file,
+                            cover_mode: app::CoverMode::StaticCard,
+                            img_x: disc_x,
+                            img_y: disc_y,
+                            img_cols: disc_cols,
+                            img_rows: disc_rows,
+                            accent: accent_rgb,
+                        };
+
+                        // Zero-overhead cache: ONLY transmit to Kitty when song, layout, or mode changed!
+                        if last_kitty_key.as_ref() != Some(&current_key) {
+                            if let Some(png) = app.cover_art.render_highres_cover_png(
+                                360,
+                                app.theme.accent,
+                                &t_str,
+                                &a_str,
+                            ) {
+                                let mut stdout_handle = std::io::stdout().lock();
+                                let _ = cover_art::send_kitty_image(
+                                    &mut stdout_handle,
+                                    &png,
+                                    disc_x,
+                                    disc_y,
+                                    disc_cols,
+                                    disc_rows,
+                                    1,
+                                );
+                            }
+                            last_kitty_key = Some(current_key);
+                        }
+                    }
+                    app::CoverMode::SpinningVinyl => {
+                        let is_playing = app.mpd_status.state == mpd_client::PlaybackState::Play;
+
+                        let should_render = if !is_playing {
+                            // Paused: render once at current angle!
+                            let current_key = KittyCacheKey {
+                                song_file,
+                                cover_mode: app::CoverMode::SpinningVinyl,
+                                img_x: disc_x,
+                                img_y: disc_y,
+                                img_cols: disc_cols,
+                                img_rows: disc_rows,
+                                accent: accent_rgb,
+                            };
+                            if last_kitty_key.as_ref() != Some(&current_key) {
+                                last_kitty_key = Some(current_key);
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            // Playing: throttle to ~16 FPS (60ms) to ensure butter smoothness without PTY lag
+                            last_kitty_key = None;
+                            if last_vinyl_render.elapsed() >= Duration::from_millis(60) {
+                                last_vinyl_render = Instant::now();
+                                true
+                            } else {
+                                false
+                            }
+                        };
+
+                        if should_render {
+                            if let Some(png) = app.cover_art.render_highres_vinyl_png(
+                                320,
+                                app.rotation_angle,
+                                app.theme.accent,
+                                &t_str,
+                                &a_str,
+                            ) {
+                                let mut stdout_handle = std::io::stdout().lock();
+                                let _ = cover_art::send_kitty_image(
+                                    &mut stdout_handle,
+                                    &png,
+                                    disc_x,
+                                    disc_y,
+                                    disc_cols,
+                                    disc_rows,
+                                    1,
+                                );
+                            }
+                        }
+                    }
                 }
-                was_player = true;
-            } else if was_player {
+                last_was_player = true;
+            } else if last_was_player {
                 let mut stdout_handle = std::io::stdout().lock();
                 let _ = cover_art::clear_kitty_images(&mut stdout_handle);
-                was_player = false;
+                last_was_player = false;
+                last_kitty_key = None;
             }
         }
 
@@ -134,6 +197,7 @@ fn main() -> Result<()> {
                     if app.cover_art.supports_kitty {
                         let mut out = std::io::stdout().lock();
                         let _ = cover_art::clear_kitty_images(&mut out);
+                        last_kitty_key = None;
                     }
                 }
                 _ => {}

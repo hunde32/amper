@@ -11,7 +11,9 @@ pub struct LyricLine {
 
 #[derive(Debug, Clone)]
 pub struct LyricsData {
+    #[allow(dead_code)]
     pub artist: String,
+    #[allow(dead_code)]
     pub title: String,
     pub is_synced: bool,
     pub lines: Vec<LyricLine>,

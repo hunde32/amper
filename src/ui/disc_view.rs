@@ -1,4 +1,4 @@
-use crate::app::{BottomPanelMode, CoverMode};
+use crate::app::{BottomPanelMode, CoverGeometry, CoverMode};
 use crate::cover_art::CoverArtManager;
 use crate::lyrics::LyricsManager;
 use crate::mpd_client::{MpdStatus, PlaybackState, SongInfo};
@@ -18,17 +18,17 @@ pub struct DiscView<'a> {
     pub cover_art: &'a CoverArtManager,
     pub rotation_angle: f32,
     pub theme: &'a Theme,
-    pub is_favorite: bool,
     pub tick_counter: u64,
     pub cover_mode: CoverMode,
     pub bottom_mode: BottomPanelMode,
     pub lyrics_mgr: &'a LyricsManager,
     pub clicked_button: Option<(&'static str, Instant)>,
+    pub geom: CoverGeometry,
 }
 
 impl<'a> Widget for DiscView<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width < 25 || area.height < 15 {
+        if area.width < 25 || area.height < 14 {
             let msg = Paragraph::new("Terminal too small for Player")
                 .style(self.theme.dim())
                 .alignment(Alignment::Center);
@@ -42,10 +42,10 @@ impl<'a> Widget for DiscView<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2), // 1. Visualizer banner
-                Constraint::Min(8),    // 2. Cover / Disc container
+                Constraint::Min(6),    // 2. Cover / Disc container
                 Constraint::Length(2), // 3. Title & Artist
                 Constraint::Length(1), // 4. Scrubber
-                Constraint::Length(4), // 5. Boxed Cyberpunk controls with filled active button
+                Constraint::Length(3), // 5. Boxed Cyberpunk controls
                 Constraint::Length(6), // 6. Customizable bottom panel
             ])
             .split(area);
@@ -77,69 +77,100 @@ impl<'a> Widget for DiscView<'a> {
             .border_style(self.theme.border_style())
             .title_bottom(Span::styled(mode_tag, self.theme.dim()))
             .style(Style::default().bg(Color::Reset));
-        let cover_inner = cover_block.inner(cover_box_area);
         cover_block.render(cover_box_area, buf);
 
-        // Size of the inner graphic
-        let max_cols = cover_inner.width.saturating_sub(2);
-        let max_rows = cover_inner.height;
-        let disc_cols = max_cols.min(max_rows * 2).max(6);
-        let disc_rows = (disc_cols / 2).max(3);
-
-        let disc_x = cover_inner.x + (cover_inner.width.saturating_sub(disc_cols)) / 2;
-        let disc_y = cover_inner.y + (cover_inner.height.saturating_sub(disc_rows)) / 2;
-
+        // Inner artwork bounds
         let (title_str, artist_str) = if let Some(s) = self.song {
             (s.display_title(), s.display_artist())
         } else {
             ("Corolla Club".to_string(), "NOXYGEN".to_string())
         };
 
-        let pixel_width = disc_cols as usize;
-        let pixel_height = (disc_rows * 2) as usize;
-
-        // Render half-block fallback
-        let frame_colors = match self.cover_mode {
-            CoverMode::StaticCard => {
-                self.cover_art.render_static_frame(pixel_width, pixel_height, self.theme.accent)
+        if self.cover_art.supports_kitty {
+            // Keep cells clear so Kitty GPU graphics display crisply without text interference
+            for r in 0..self.geom.img_rows {
+                let cy = self.geom.img_y + r;
+                for c in 0..self.geom.img_cols {
+                    let cx = self.geom.img_x + c;
+                    if cx < buf.area.width && cy < buf.area.height {
+                        let cell = &mut buf[(cx, cy)];
+                        cell.set_char(' ');
+                        cell.set_bg(Color::Reset);
+                    }
+                }
             }
-            CoverMode::SpinningVinyl => {
-                self.cover_art.render_vinyl_frame(pixel_width, pixel_height, self.rotation_angle, self.theme.accent)
-            }
-        };
+        } else {
+            // High quality half-block fallback for terminals without Kitty protocol
+            let pixel_width = self.geom.img_cols as usize;
+            let pixel_height = (self.geom.img_rows * 2) as usize;
 
-        for r in 0..disc_rows {
-            let py_top = (r * 2) as usize;
-            let py_bot = (r * 2 + 1) as usize;
-            let cur_y = disc_y + r;
+            let frame_colors = match self.cover_mode {
+                CoverMode::StaticCard => {
+                    self.cover_art.render_static_frame(pixel_width, pixel_height, self.theme.accent)
+                }
+                CoverMode::SpinningVinyl => {
+                    self.cover_art.render_vinyl_frame(pixel_width, pixel_height, self.rotation_angle, self.theme.accent)
+                }
+            };
 
-            if cur_y >= cover_inner.y + cover_inner.height {
-                break;
-            }
+            for r in 0..self.geom.img_rows {
+                let py_top = (r * 2) as usize;
+                let py_bot = (r * 2 + 1) as usize;
+                let cur_y = self.geom.img_y + r;
 
-            for c in 0..disc_cols {
-                let cur_x = disc_x + c;
-                if cur_x >= cover_inner.x + cover_inner.width {
+                if cur_y >= self.geom.inner_rect.y + self.geom.inner_rect.height {
                     break;
                 }
 
-                let top_col = frame_colors[py_top][c as usize];
-                let bot_col = frame_colors[py_bot][c as usize];
+                for c in 0..self.geom.img_cols {
+                    let cur_x = self.geom.img_x + c;
+                    if cur_x >= self.geom.inner_rect.x + self.geom.inner_rect.width {
+                        break;
+                    }
 
-                let cell = &mut buf[(cur_x, cur_y)];
-                cell.set_char('▀');
-                cell.set_fg(top_col);
-                cell.set_bg(bot_col);
+                    if py_top < frame_colors.len() && py_bot < frame_colors.len() && (c as usize) < frame_colors[0].len() {
+                        let top_col = frame_colors[py_top][c as usize];
+                        let bot_col = frame_colors[py_bot][c as usize];
+
+                        let cell = &mut buf[(cur_x, cur_y)];
+                        cell.set_char('▀');
+                        cell.set_fg(top_col);
+                        cell.set_bg(bot_col);
+                    }
+                }
             }
         }
 
+        // Resolution / format badge in bottom-right corner of inner frame
+        let badge_text = match self.cover_mode {
+            CoverMode::StaticCard => "128x128_PXL",
+            CoverMode::SpinningVinyl => "33_RPM",
+        };
+        let badge_x = self.geom.inner_rect.x + self.geom.inner_rect.width.saturating_sub(badge_text.len() as u16 + 1);
+        let badge_y = self.geom.inner_rect.y + self.geom.inner_rect.height.saturating_sub(1);
+        if badge_x < buf.area.width && badge_y < buf.area.height {
+            buf.set_string(badge_x, badge_y, badge_text, self.theme.dim());
+        }
+
         // --- 3. Track Title & Artist ---
+        let max_w = cover_box_area.width.saturating_sub(4) as usize;
+        let mut display_title = title_str.to_uppercase();
+        if display_title.len() > max_w && max_w > 3 {
+            display_title.truncate(max_w - 3);
+            display_title.push_str("...");
+        }
+        let mut display_artist = artist_str.to_uppercase();
+        if display_artist.len() > max_w && max_w > 3 {
+            display_artist.truncate(max_w - 3);
+            display_artist.push_str("...");
+        }
+
         let title_line = Line::from(vec![Span::styled(
-            &title_str,
+            display_title,
             self.theme.primary_bold(),
         )]);
         let artist_line = Line::from(vec![Span::styled(
-            &artist_str,
+            display_artist,
             self.theme.secondary(),
         )]);
 
@@ -177,92 +208,146 @@ impl<'a> Widget for DiscView<'a> {
 
         Paragraph::new(scrubber_line).alignment(Alignment::Center).render(scrubber_area, buf);
 
-        // --- 5. Boxed Controls with Filled Active Background ---
+        // --- 5. Boxed Controls with Filled Active Background (Matching Reference Screenshot) ---
         let now = Instant::now();
         let clicked = self.clicked_button.and_then(|(name, time)| {
-            if now.duration_since(time).as_millis() < 400 {
+            if now.duration_since(time).as_millis() < 350 {
                 Some(name)
             } else {
                 None
             }
         });
 
-        let repeat_active = self.status.repeat || clicked == Some("repeat");
-        let prev_active = clicked == Some("prev");
-        let play_active = is_playing || clicked == Some("play");
-        let next_active = clicked == Some("next");
         let shuffle_active = self.status.random || clicked == Some("shuffle");
+        let prev_active = clicked == Some("prev");
+        let play_clicked = clicked == Some("play");
+        let next_active = clicked == Some("next");
+        let repeat_active = self.status.repeat || clicked == Some("repeat");
 
-        // Filled active style (matching screenshot: prominent warm filled button block!)
-        let active_style = Style::default()
+        let border_dim = self.theme.border_style();
+        let text_norm = Style::default().fg(self.theme.text_primary).bg(Color::Reset);
+
+        // 1. Center Play/Pause button: A LARGE, TALL 3-ROW SOLID FILLED ACCENT BLOCK (matching screenshot)
+        let play_bg_col = if play_clicked {
+            Color::Rgb(255, 255, 255)
+        } else {
+            self.theme.accent
+        };
+        let play_fg_col = if play_clicked {
+            self.theme.accent
+        } else {
+            Color::Rgb(255, 255, 255)
+        };
+        let play_block_style = Style::default()
+            .bg(play_bg_col)
+            .fg(play_fg_col)
+            .add_modifier(Modifier::BOLD);
+
+        let play_icon = if is_playing { "   ||    " } else { "    ▶    " };
+
+        let p_top = Span::styled("         ", play_block_style);
+        let p_mid = Span::styled(play_icon, play_block_style);
+        let p_bot = Span::styled("         ", play_block_style);
+
+        // 2. Shuffle [ ⇄ ] (Left boxed button, 5 chars wide)
+        let active_pill = Style::default()
             .bg(self.theme.accent)
             .fg(Color::Rgb(20, 20, 26))
             .add_modifier(Modifier::BOLD);
 
-        let inactive_style = Style::default().fg(self.theme.text_primary).bg(Color::Reset);
-        let border_style = self.theme.border_style();
+        let (shuf_t, shuf_m, shuf_b) = if shuffle_active {
+            (
+                Span::styled("┌───┐", active_pill),
+                Span::styled("│ ⇄ │", active_pill),
+                Span::styled("└───┘", active_pill),
+            )
+        } else {
+            (
+                Span::styled("┌───┐", border_dim),
+                Span::styled("│ ⇄ │", text_norm),
+                Span::styled("└───┘", border_dim),
+            )
+        };
 
-        // Row 1: Top borders
-        let r1_rep = if repeat_active { Span::styled("┌───┐", active_style) } else { Span::styled("┌───┐", border_style) };
-        let r1_prev = if prev_active { Span::styled("┌─────┐", active_style) } else { Span::styled("┌─────┐", border_style) };
-        let r1_play = if play_active { Span::styled("┌─────────┐", active_style) } else { Span::styled("┌─────────┐", border_style) };
-        let r1_next = if next_active { Span::styled("┌─────┐", active_style) } else { Span::styled("┌─────┐", border_style) };
-        let r1_shuf = if shuffle_active { Span::styled("┌───┐", active_style) } else { Span::styled("┌───┐", border_style) };
+        // 3. Repeat [ ↻ ] (Right boxed button, 5 chars wide)
+        let (rep_t, rep_m, rep_b) = if repeat_active {
+            (
+                Span::styled("┌───┐", active_pill),
+                Span::styled("│ ↻ │", active_pill),
+                Span::styled("└───┘", active_pill),
+            )
+        } else {
+            (
+                Span::styled("┌───┐", border_dim),
+                Span::styled("│ ↻ │", text_norm),
+                Span::styled("└───┘", border_dim),
+            )
+        };
+
+        // 4. Previous |<< (Mid-left sleek text, 5 chars wide)
+        let (prev_t, prev_m, prev_b) = if prev_active {
+            (
+                Span::styled("┌───┐", active_pill),
+                Span::styled("|<< ", active_pill),
+                Span::styled("└───┘", active_pill),
+            )
+        } else {
+            (
+                Span::raw("     "),
+                Span::styled(" |<< ", text_norm.add_modifier(Modifier::BOLD)),
+                Span::raw("     "),
+            )
+        };
+
+        // 5. Next >>| (Mid-right sleek text, 5 chars wide)
+        let (next_t, next_m, next_b) = if next_active {
+            (
+                Span::styled("┌───┐", active_pill),
+                Span::styled(" >>|", active_pill),
+                Span::styled("└───┘", active_pill),
+            )
+        } else {
+            (
+                Span::raw("     "),
+                Span::styled(" >>| ", text_norm.add_modifier(Modifier::BOLD)),
+                Span::raw("     "),
+            )
+        };
 
         let row1 = Line::from(vec![
-            r1_rep,
+            shuf_t,
             Span::raw("   "),
-            r1_prev,
+            prev_t,
             Span::raw("   "),
-            r1_play,
+            p_top,
             Span::raw("   "),
-            r1_next,
+            next_t,
             Span::raw("   "),
-            r1_shuf,
+            rep_t,
         ]);
-
-        // Row 2: Content
-        let play_icon = if is_playing { "   ||    " } else { "    ▶    " };
-
-        let r2_rep = if repeat_active { Span::styled("│ ⇄ │", active_style) } else { Span::styled("│ ⇄ │", inactive_style) };
-        let r2_prev = if prev_active { Span::styled("│ |<< │", active_style) } else { Span::styled("│ |<< │", inactive_style) };
-        let r2_play = if play_active {
-            Span::styled(format!("│{}│", play_icon), active_style)
-        } else {
-            Span::styled(format!("│{}│", play_icon), inactive_style)
-        };
-        let r2_next = if next_active { Span::styled("│ >>| │", active_style) } else { Span::styled("│ >>| │", inactive_style) };
-        let r2_shuf = if shuffle_active { Span::styled("│ ↻ │", active_style) } else { Span::styled("│ ↻ │", inactive_style) };
 
         let row2 = Line::from(vec![
-            r2_rep,
+            shuf_m,
             Span::raw("   "),
-            r2_prev,
+            prev_m,
             Span::raw("   "),
-            r2_play,
+            p_mid,
             Span::raw("   "),
-            r2_next,
+            next_m,
             Span::raw("   "),
-            r2_shuf,
+            rep_m,
         ]);
 
-        // Row 3: Bottom borders
-        let r3_rep = if repeat_active { Span::styled("└───┘", active_style) } else { Span::styled("└───┘", border_style) };
-        let r3_prev = if prev_active { Span::styled("└─────┘", active_style) } else { Span::styled("└─────┘", border_style) };
-        let r3_play = if play_active { Span::styled("└─────────┘", active_style) } else { Span::styled("└─────────┘", border_style) };
-        let r3_next = if next_active { Span::styled("└─────┘", active_style) } else { Span::styled("└─────┘", border_style) };
-        let r3_shuf = if shuffle_active { Span::styled("└───┘", active_style) } else { Span::styled("└───┘", border_style) };
-
         let row3 = Line::from(vec![
-            r3_rep,
+            shuf_b,
             Span::raw("   "),
-            r3_prev,
+            prev_b,
             Span::raw("   "),
-            r3_play,
+            p_bot,
             Span::raw("   "),
-            r3_next,
+            next_b,
             Span::raw("   "),
-            r3_shuf,
+            rep_b,
         ]);
 
         let controls_lines = vec![row1, row2, row3];

@@ -15,24 +15,16 @@ use help_view::HelpModal;
 use library_view::LibraryView;
 use lyrics_view::LyricsView;
 use queue_view::QueueView;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let size = f.area();
+    let geom = App::get_cover_geometry(size);
 
     // Responsive centered container (no solid background fill, 100% transparent to terminal!)
-    let card_width = 72.min(size.width.saturating_sub(2)).max(28);
-    let card_height = size.height;
-
-    let card_x = size.x + (size.width.saturating_sub(card_width)) / 2;
-    let card_rect = Rect {
-        x: card_x,
-        y: size.y,
-        width: card_width,
-        height: card_height,
-    };
+    let card_rect = geom.card_rect;
 
     let vertical_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -50,7 +42,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     // 1. Top Header Bar
     f.render_widget(
         HeaderWidget {
-            song: app.current_song.as_ref(),
+            _song: app.current_song.as_ref(),
             active_tab: app.active_tab,
             theme: &app.theme,
             is_favorite: app.is_favorite,
@@ -68,12 +60,12 @@ pub fn draw(f: &mut Frame, app: &App) {
                     cover_art: &app.cover_art,
                     rotation_angle: app.rotation_angle,
                     theme: &app.theme,
-                    is_favorite: app.is_favorite,
                     tick_counter: app.tick_counter,
                     cover_mode: app.cover_mode,
                     bottom_mode: app.bottom_mode,
                     lyrics_mgr: &app.lyrics_mgr,
                     clicked_button: app.clicked_button,
+                    geom,
                 },
                 body_area,
             );

@@ -27,6 +27,17 @@ pub enum BottomPanelMode {
     Metadata,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverGeometry {
+    pub card_rect: ratatui::layout::Rect,
+    pub cover_box_rect: ratatui::layout::Rect,
+    pub inner_rect: ratatui::layout::Rect,
+    pub img_x: u16,
+    pub img_y: u16,
+    pub img_cols: u16,
+    pub img_rows: u16,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub active_tab: ActiveTab,
@@ -199,6 +210,34 @@ impl App {
         }
     }
 
+    pub fn toggle_cover_mode(&mut self) {
+        self.cover_mode = match self.cover_mode {
+            CoverMode::StaticCard => CoverMode::SpinningVinyl,
+            CoverMode::SpinningVinyl => CoverMode::StaticCard,
+        };
+        let name = match self.cover_mode {
+            CoverMode::StaticCard => "Static Album Card",
+            CoverMode::SpinningVinyl => "Spinning Vinyl Record",
+        };
+        self.set_status_message(&format!("Cover View: {}", name));
+    }
+
+    pub fn cycle_bottom_panel(&mut self) {
+        self.bottom_mode = match self.bottom_mode {
+            BottomPanelMode::Telemetry => BottomPanelMode::Visualizer,
+            BottomPanelMode::Visualizer => BottomPanelMode::MiniLyrics,
+            BottomPanelMode::MiniLyrics => BottomPanelMode::Metadata,
+            BottomPanelMode::Metadata => BottomPanelMode::Telemetry,
+        };
+        let name = match self.bottom_mode {
+            BottomPanelMode::Telemetry => "Audio Monitor // Telemetry",
+            BottomPanelMode::Visualizer => "Spectrum // Visualizer",
+            BottomPanelMode::MiniLyrics => "Live Synchronized Lyrics",
+            BottomPanelMode::Metadata => "Track Details // Metadata",
+        };
+        self.set_status_message(&format!("Bottom Panel: {}", name));
+    }
+
     pub fn filtered_queue(&self) -> Vec<SongInfo> {
         if self.queue_search_query.is_empty() {
             return self.playlist.clone();
@@ -343,30 +382,10 @@ impl App {
                 self.set_status_message(&format!("Shuffle: {}", mode));
             }
             KeyCode::Char('v') => {
-                self.cover_mode = match self.cover_mode {
-                    CoverMode::StaticCard => CoverMode::SpinningVinyl,
-                    CoverMode::SpinningVinyl => CoverMode::StaticCard,
-                };
-                let name = match self.cover_mode {
-                    CoverMode::StaticCard => "Static Cover Art",
-                    CoverMode::SpinningVinyl => "Spinning Vinyl Record",
-                };
-                self.set_status_message(&format!("Cover Display: {}", name));
+                self.toggle_cover_mode();
             }
             KeyCode::Char('m') | KeyCode::Char('b') => {
-                self.bottom_mode = match self.bottom_mode {
-                    BottomPanelMode::Telemetry => BottomPanelMode::Visualizer,
-                    BottomPanelMode::Visualizer => BottomPanelMode::MiniLyrics,
-                    BottomPanelMode::MiniLyrics => BottomPanelMode::Metadata,
-                    BottomPanelMode::Metadata => BottomPanelMode::Telemetry,
-                };
-                let name = match self.bottom_mode {
-                    BottomPanelMode::Telemetry => "Audio Monitor // Telemetry",
-                    BottomPanelMode::Visualizer => "Spectrum // Visualizer",
-                    BottomPanelMode::MiniLyrics => "Live Synchronized Lyrics",
-                    BottomPanelMode::Metadata => "Track Details // Metadata",
-                };
-                self.set_status_message(&format!("Bottom Panel: {}", name));
+                self.cycle_bottom_panel();
             }
             KeyCode::Char('f') => {
                 self.is_favorite = !self.is_favorite;
@@ -478,55 +497,163 @@ impl App {
         }
     }
 
+    pub fn get_cover_geometry(terminal_size: ratatui::layout::Rect) -> CoverGeometry {
+        let card_width = 72.min(terminal_size.width.saturating_sub(2)).max(28);
+        let card_height = terminal_size.height;
+        let card_x = terminal_size.x + (terminal_size.width.saturating_sub(card_width)) / 2;
+        let card_y = terminal_size.y;
+        let card_rect = ratatui::layout::Rect {
+            x: card_x,
+            y: card_y,
+            width: card_width,
+            height: card_height,
+        };
+
+        let body_y = card_y + 1;
+        let body_h = card_height.saturating_sub(2);
+
+        let cover_box_y = body_y + 2;
+        let cover_box_h = body_h.saturating_sub(14).max(6);
+        let cover_box_w = card_width;
+        let cover_box_rect = ratatui::layout::Rect {
+            x: card_x,
+            y: cover_box_y,
+            width: cover_box_w,
+            height: cover_box_h,
+        };
+
+        let inner_x = cover_box_rect.x + 1;
+        let inner_y = cover_box_rect.y + 1;
+        let inner_w = cover_box_rect.width.saturating_sub(2);
+        let inner_h = cover_box_rect.height.saturating_sub(2);
+        let inner_rect = ratatui::layout::Rect {
+            x: inner_x,
+            y: inner_y,
+            width: inner_w,
+            height: inner_h,
+        };
+
+        // Strict padding guarantees image never touches or bleeds outside borders
+        let pad_v = if inner_h >= 14 { 2 } else if inner_h >= 6 { 1 } else { 0 };
+        let pad_h = if inner_w >= 40 { 4 } else { 2 };
+
+        let avail_rows = inner_h.saturating_sub(pad_v * 2).max(2);
+        let avail_cols = inner_w.saturating_sub(pad_h * 2).max(4);
+
+        // Standard terminal cell aspect ratio (width:height ~ 1:2)
+        let img_rows = avail_rows.min(avail_cols / 2).max(2);
+        let img_cols = img_rows * 2;
+
+        let img_x = inner_x + (inner_w.saturating_sub(img_cols)) / 2;
+        let img_y = inner_y + (inner_h.saturating_sub(img_rows)) / 2;
+
+        CoverGeometry {
+            card_rect,
+            cover_box_rect,
+            inner_rect,
+            img_x,
+            img_y,
+            img_cols,
+            img_rows,
+        }
+    }
+
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
+            let geom = Self::get_cover_geometry(ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: term_w,
+                height: term_h,
+            });
+
             // 1. Top Header clicks
             if mouse.row <= 1 {
-                if mouse.column >= 12 && mouse.column <= 19 {
+                let col = mouse.column;
+                let cx = term_w / 2;
+                if col < geom.card_rect.x + 8 {
+                    self.show_help = !self.show_help;
+                } else if col >= cx.saturating_sub(18) && col <= cx.saturating_sub(10) {
                     self.active_tab = ActiveTab::Player;
-                } else if mouse.column >= 20 && mouse.column <= 28 {
+                } else if col >= cx.saturating_sub(9) && col <= cx.saturating_sub(1) {
                     self.active_tab = ActiveTab::Lyrics;
-                } else if mouse.column >= 29 && mouse.column <= 36 {
+                } else if col >= cx && col <= cx + 8 {
                     self.active_tab = ActiveTab::Queue;
-                } else if mouse.column >= 37 && mouse.column <= 43 {
+                } else if col >= cx + 9 && col <= cx + 17 {
                     self.active_tab = ActiveTab::Library;
-                } else if mouse.column >= 44 && mouse.column <= 55 {
+                } else if col >= cx + 18 && col <= cx + 26 {
                     self.is_favorite = !self.is_favorite;
                     let msg = if self.is_favorite { "Added to Liked Songs ♥" } else { "Removed from Liked Songs" };
                     self.set_status_message(msg);
-                } else if mouse.column >= 56 {
-                    self.show_help = !self.show_help;
                 }
                 return;
             }
 
             // 2. Player Controls clicks
-            if self.active_tab == ActiveTab::Player {
-                // If clicked near the bottom panel header: cycle bottom mode
-                // Otherwise if clicked on controls:
+            if self.active_tab == ActiveTab::Player && !self.show_help {
+                let cx = term_w / 2;
                 let col = mouse.column;
-                if col >= 30 && col <= 44 {
-                    self.clicked_button = Some(("play", Instant::now()));
-                    let _ = self.mpd.toggle_pause();
-                    self.refresh_mpd(false);
-                } else if col >= 21 && col <= 29 {
-                    self.clicked_button = Some(("prev", Instant::now()));
-                    let _ = self.mpd.previous();
-                    self.set_status_message("Previous track");
-                    self.refresh_mpd(false);
-                } else if col >= 45 && col <= 53 {
-                    self.clicked_button = Some(("next", Instant::now()));
-                    let _ = self.mpd.next();
-                    self.set_status_message("Next track");
-                    self.refresh_mpd(false);
-                } else if col >= 13 && col <= 20 {
-                    self.clicked_button = Some(("repeat", Instant::now()));
-                    let _ = self.mpd.toggle_repeat();
-                    self.refresh_mpd(false);
-                } else if col >= 54 && col <= 61 {
-                    self.clicked_button = Some(("shuffle", Instant::now()));
-                    let _ = self.mpd.toggle_random();
-                    self.refresh_mpd(false);
+                let row = mouse.row;
+
+                // Clicking cover box toggles cover mode (Static vs Vinyl)
+                if row >= geom.cover_box_rect.y && row < geom.cover_box_rect.y + geom.cover_box_rect.height {
+                    self.toggle_cover_mode();
+                    return;
+                }
+
+                let title_y = geom.cover_box_rect.y + geom.cover_box_rect.height;
+                let scrubber_y = title_y + 2;
+                let controls_y = scrubber_y + 1;
+                let bottom_y = controls_y + 3;
+
+                // Scrubber seek click
+                if row == scrubber_y {
+                    let bar_w = 36.min(geom.card_rect.width.saturating_sub(14)) as f64;
+                    let bar_start = (cx as f64) - (bar_w / 2.0);
+                    let bar_end = (cx as f64) + (bar_w / 2.0);
+                    if (col as f64) >= bar_start && (col as f64) <= bar_end && self.mpd_status.duration > 0.0 {
+                        let ratio = ((col as f64 - bar_start) / bar_w).clamp(0.0, 1.0);
+                        let target = ratio * self.mpd_status.duration;
+                        let _ = self.mpd.seek_absolute(target);
+                        self.refresh_mpd(false);
+                        return;
+                    }
+                }
+
+                // Controls row click (3 rows)
+                if row >= controls_y && row < controls_y + 3 {
+                    // Center button: Play/Pause (cx - 5 ..= cx + 5)
+                    if col >= cx.saturating_sub(5) && col <= cx + 5 {
+                        self.clicked_button = Some(("play", Instant::now()));
+                        let _ = self.mpd.toggle_pause();
+                        self.refresh_mpd(false);
+                    } else if col >= cx.saturating_sub(13) && col <= cx.saturating_sub(6) {
+                        self.clicked_button = Some(("prev", Instant::now()));
+                        let _ = self.mpd.previous();
+                        self.set_status_message("Previous track");
+                        self.refresh_mpd(false);
+                    } else if col >= cx + 6 && col <= cx + 13 {
+                        self.clicked_button = Some(("next", Instant::now()));
+                        let _ = self.mpd.next();
+                        self.set_status_message("Next track");
+                        self.refresh_mpd(false);
+                    } else if col >= cx.saturating_sub(22) && col <= cx.saturating_sub(14) {
+                        self.clicked_button = Some(("shuffle", Instant::now()));
+                        let _ = self.mpd.toggle_random();
+                        self.refresh_mpd(false);
+                    } else if col >= cx + 14 && col <= cx + 22 {
+                        self.clicked_button = Some(("repeat", Instant::now()));
+                        let _ = self.mpd.toggle_repeat();
+                        self.refresh_mpd(false);
+                    }
+                    return;
+                }
+
+                // Bottom panel header click: cycle mode
+                if row >= bottom_y && row < bottom_y + 6 {
+                    self.cycle_bottom_panel();
+                    return;
                 }
             }
         }

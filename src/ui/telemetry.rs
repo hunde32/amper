@@ -4,7 +4,6 @@ use crate::mpd_client::{MpdStatus, PlaybackState, SongInfo};
 use crate::ui::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 

@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 pub struct HeaderWidget<'a> {
-    pub song: Option<&'a SongInfo>,
+    pub _song: Option<&'a SongInfo>,
     pub active_tab: ActiveTab,
     pub theme: &'a Theme,
     pub is_favorite: bool,
