@@ -514,9 +514,9 @@ impl App {
         // ── Cover box position inside the card ───────────────────────────────
         // Rows above cover box: header (1), visualizer (2) = 3 rows
         // Rows below cover box: title (1), artist (1), spacer (1), scrubber (1), spacer (1),
-        //                       controls (3), bottom panel (6), toast (1) = 15 rows
+        //                       controls (3), spacer (1), bottom panel (6), toast (1) = 16 rows
         let above_cover = 3u16;
-        let below_cover = 15u16;
+        let below_cover = 16u16;
 
         let avail_h = card_height.saturating_sub(above_cover + below_cover);
 
@@ -619,10 +619,10 @@ impl App {
 
                 // Vertical positions matching DiscView chunks layout
                 let body_h = geom.card_rect.height.saturating_sub(2);
-                let title_y = 1 + body_h.saturating_sub(14);
+                let title_y = 1 + body_h.saturating_sub(15);
                 let scrubber_y = title_y + 3;
                 let controls_y = title_y + 5;
-                let bottom_y = title_y + 8;
+                let bottom_y = title_y + 9; // after 3 rows of controls + 1 row of spacer
 
                 // Scrubber seek click
                 if row == scrubber_y {
@@ -645,21 +645,21 @@ impl App {
                         self.clicked_button = Some(("play", Instant::now()));
                         let _ = self.mpd.toggle_pause();
                         self.refresh_mpd(false);
-                    } else if col >= cx.saturating_sub(11) && col <= cx.saturating_sub(6) {
+                    } else if col >= cx.saturating_sub(13) && col <= cx.saturating_sub(7) {
                         self.clicked_button = Some(("prev", Instant::now()));
                         let _ = self.mpd.previous();
                         self.set_status_message("Previous track");
                         self.refresh_mpd(false);
-                    } else if col >= cx + 6 && col <= cx + 11 {
+                    } else if col >= cx + 7 && col <= cx + 13 {
                         self.clicked_button = Some(("next", Instant::now()));
                         let _ = self.mpd.next();
                         self.set_status_message("Next track");
                         self.refresh_mpd(false);
-                    } else if col >= cx.saturating_sub(18) && col <= cx.saturating_sub(12) {
+                    } else if col >= cx.saturating_sub(20) && col <= cx.saturating_sub(15) {
                         self.clicked_button = Some(("shuffle", Instant::now()));
                         let _ = self.mpd.toggle_random();
                         self.refresh_mpd(false);
-                    } else if col >= cx + 12 && col <= cx + 18 {
+                    } else if col >= cx + 15 && col <= cx + 20 {
                         self.clicked_button = Some(("repeat", Instant::now()));
                         let _ = self.mpd.toggle_repeat();
                         self.refresh_mpd(false);

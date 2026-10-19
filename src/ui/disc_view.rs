@@ -52,7 +52,7 @@ impl<'a> Widget for DiscView<'a> {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // 0  visualizer
+                Constraint::Length(2), // 0  visualizer (perfect waveform banner)
                 Constraint::Min(6),    // 1  cover box
                 Constraint::Length(1), // 2  title
                 Constraint::Length(1), // 3  artist
@@ -60,21 +60,23 @@ impl<'a> Widget for DiscView<'a> {
                 Constraint::Length(1), // 5  scrubber
                 Constraint::Length(1), // 6  spacer
                 Constraint::Length(3), // 7  controls (3 explicit rows)
-                Constraint::Length(6), // 8  bottom panel
+                Constraint::Length(1), // 8  spacer between controls and lower telemetry
+                Constraint::Length(6), // 9  customisable bottom panel (telemetry)
             ])
             .split(area);
 
-        let viz_area       = chunks[0];
+        let viz_area        = chunks[0];
         let _cover_box_area = chunks[1];
-        let title_area    = chunks[2];
-        let artist_area   = chunks[3];
-        // chunks[4] is the spacer row – we do nothing with it
-        let scrubber_area = chunks[5];
-        // chunks[6] is the spacer row – we do nothing with it
-        let controls_area = chunks[7];
-        let bottom_area   = chunks[8];
+        let title_area      = chunks[2];
+        let artist_area     = chunks[3];
+        // chunks[4] is the spacer row
+        let scrubber_area   = chunks[5];
+        // chunks[6] is the spacer row
+        let controls_area   = chunks[7];
+        // chunks[8] is the spacer row between controls and lower telemetry
+        let bottom_area     = chunks[9];
 
-        // ── 0. Visualizer ───────────────────────────────────────────────────────
+        // ── 0. Visualizer (preserved exactly as user requested) ───────────────────
         VisualizerWidget {
             is_playing,
             tick_counter: self.tick_counter,
@@ -213,7 +215,7 @@ impl<'a> Widget for DiscView<'a> {
                 .render(scrubber_area, buf);
         }
 
-        // ── 7. Controls – 3 rows, perfectly contained in controls_area ──────────
+        // ── 7. Controls – 3 rows, beautifully boxed and perfectly centered ──────
         {
             let now = Instant::now();
             let clicked = self.clicked_button.and_then(|(name, time)| {
@@ -227,16 +229,46 @@ impl<'a> Widget for DiscView<'a> {
             let repeat_on  = self.status.repeat || clicked == Some("repeat");
 
             // ── Style tokens ──────────────────────────────────────────────────
-            let bdim   = self.theme.border_style();  // inactive box border
-            let tnorm  = Style::default().fg(self.theme.text_primary).bg(Color::Reset);
+            let border_inactive = self.theme.dim();
+            let border_active   = Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD);
+            let border_clicked  = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
 
-            // Active toggle buttons (shuffle/repeat): accent-filled box
-            let pill_on = Style::default()
-                .bg(self.theme.accent)
-                .fg(Color::Rgb(15, 15, 25))
-                .add_modifier(Modifier::BOLD);
+            let icon_dim   = Style::default().fg(self.theme.text_secondary);
+            let icon_lit   = Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD);
+            let icon_click = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+            let icon_norm  = Style::default().fg(self.theme.text_primary).add_modifier(Modifier::BOLD);
 
-            // Center play/pause button: large solid filled block
+            // 1. Shuffle Button [ ⇄ ] (5 cols: ┌───┐ / │ ⇄ │ / └───┘)
+            let (shuf_b_sty, shuf_i_sty) = if clicked == Some("shuffle") {
+                (border_clicked, icon_click)
+            } else if shuffle_on {
+                (border_active, icon_lit)
+            } else {
+                (border_inactive, icon_dim)
+            };
+            let shuf_t = Span::styled("┌───┐", shuf_b_sty);
+            let shuf_m = vec![
+                Span::styled("│", shuf_b_sty),
+                Span::styled(" ⇄ ", shuf_i_sty),
+                Span::styled("│", shuf_b_sty),
+            ];
+            let shuf_b = Span::styled("└───┘", shuf_b_sty);
+
+            // 2. Previous Button [ |<< ] (7 cols: ┌─────┐ / │ |<< │ / └─────┘)
+            let (prev_b_sty, prev_i_sty) = if prev_lit {
+                (border_clicked, icon_click)
+            } else {
+                (border_inactive, icon_norm)
+            };
+            let prev_t = Span::styled("┌─────┐", prev_b_sty);
+            let prev_m = vec![
+                Span::styled("│", prev_b_sty),
+                Span::styled(" |<< ", prev_i_sty),
+                Span::styled("│", prev_b_sty),
+            ];
+            let prev_b = Span::styled("└─────┘", prev_b_sty);
+
+            // 3. Play / Pause Button (9 cols: Solid accent block with centered glyph)
             let play_bg = if play_lit { Color::White } else { self.theme.accent };
             let play_fg = if play_lit { self.theme.accent } else { Color::Rgb(10, 10, 20) };
             let play_sty = Style::default()
@@ -244,61 +276,78 @@ impl<'a> Widget for DiscView<'a> {
                 .fg(play_fg)
                 .add_modifier(Modifier::BOLD);
 
-            // Clicked prev/next: momentary accent fill
-            let prev_sty = if prev_lit { pill_on } else { tnorm.add_modifier(Modifier::BOLD) };
-            let next_sty = if next_lit { pill_on } else { tnorm.add_modifier(Modifier::BOLD) };
+            let play_icon = if is_playing { "   | |   " } else { "    ▶    " };
+            let play_t = Span::styled("         ", play_sty);
+            let play_m = Span::styled(play_icon,   play_sty);
+            let play_b = Span::styled("         ", play_sty);
 
-            // ── Shuffle [ ⇄ ] ────────────────────────────────────────────────
-            let (sht, shm, shb) = if shuffle_on {
-                (Span::styled("┌───┐", pill_on),
-                 Span::styled("│ ⇄ │", pill_on),
-                 Span::styled("└───┘", pill_on))
+            // 4. Next Button [ >>| ] (7 cols: ┌─────┐ / │ >>| │ / └─────┘)
+            let (next_b_sty, next_i_sty) = if next_lit {
+                (border_clicked, icon_click)
             } else {
-                (Span::styled("┌───┐", bdim),
-                 Span::styled("│ ⇄ │", tnorm),
-                 Span::styled("└───┘", bdim))
+                (border_inactive, icon_norm)
             };
+            let next_t = Span::styled("┌─────┐", next_b_sty);
+            let next_m = vec![
+                Span::styled("│", next_b_sty),
+                Span::styled(" >>| ", next_i_sty),
+                Span::styled("│", next_b_sty),
+            ];
+            let next_b = Span::styled("└─────┘", next_b_sty);
 
-            // ── Repeat [ ↻ ] ─────────────────────────────────────────────────
-            let (ret, rem, reb) = if repeat_on {
-                (Span::styled("┌───┐", pill_on),
-                 Span::styled("│ ↻ │", pill_on),
-                 Span::styled("└───┘", pill_on))
+            // 5. Repeat Button [ ↻ ] (5 cols: ┌───┐ / │ ↻ │ / └───┘)
+            let (rep_b_sty, rep_i_sty) = if clicked == Some("repeat") {
+                (border_clicked, icon_click)
+            } else if repeat_on {
+                (border_active, icon_lit)
             } else {
-                (Span::styled("┌───┐", bdim),
-                 Span::styled("│ ↻ │", tnorm),
-                 Span::styled("└───┘", bdim))
+                (border_inactive, icon_dim)
             };
+            let rep_t = Span::styled("┌───┐", rep_b_sty);
+            let rep_m = vec![
+                Span::styled("│", rep_b_sty),
+                Span::styled(" ↻ ", rep_i_sty),
+                Span::styled("│", rep_b_sty),
+            ];
+            let rep_b = Span::styled("└───┘", rep_b_sty);
 
-            // ── Previous  |<< ────────────────────────────────────────────────
-            let (pvt, pvm, pvb) = (
-                Span::raw("     "),
-                Span::styled(" |<< ", prev_sty),
-                Span::raw("     "),
-            );
-
-            // ── Next  >>| ────────────────────────────────────────────────────
-            let (nxt, nxm, nxb) = (
-                Span::raw("     "),
-                Span::styled(" >>| ", next_sty),
-                Span::raw("     "),
-            );
-
-            // ── Play / Pause – center tall filled block ───────────────────────
-            let play_icon = if is_playing { "   ||   " } else { "   ▶    " };
-            let (pt, pm, pb) = (
-                Span::styled("        ", play_sty),
-                Span::styled(play_icon,  play_sty),
-                Span::styled("        ", play_sty),
-            );
-
-            // ── Spacers between buttons ───────────────────────────────────────
-            // We use a single space between groups so the play button stands out
             let sp = Span::raw("  ");
 
-            let row1 = Line::from(vec![sht, sp.clone(), pvt, sp.clone(), pt, sp.clone(), nxt, sp.clone(), ret]);
-            let row2 = Line::from(vec![shm, sp.clone(), pvm, sp.clone(), pm, sp.clone(), nxm, sp.clone(), rem]);
-            let row3 = Line::from(vec![shb, sp.clone(), pvb, sp.clone(), pb, sp.clone(), nxb, sp,           reb]);
+            let mut row1_spans = Vec::with_capacity(9);
+            row1_spans.push(shuf_t);
+            row1_spans.push(sp.clone());
+            row1_spans.push(prev_t);
+            row1_spans.push(sp.clone());
+            row1_spans.push(play_t);
+            row1_spans.push(sp.clone());
+            row1_spans.push(next_t);
+            row1_spans.push(sp.clone());
+            row1_spans.push(rep_t);
+            let row1 = Line::from(row1_spans);
+
+            let mut row2_spans = Vec::with_capacity(17);
+            row2_spans.extend(shuf_m);
+            row2_spans.push(sp.clone());
+            row2_spans.extend(prev_m);
+            row2_spans.push(sp.clone());
+            row2_spans.push(play_m);
+            row2_spans.push(sp.clone());
+            row2_spans.extend(next_m);
+            row2_spans.push(sp.clone());
+            row2_spans.extend(rep_m);
+            let row2 = Line::from(row2_spans);
+
+            let mut row3_spans = Vec::with_capacity(9);
+            row3_spans.push(shuf_b);
+            row3_spans.push(sp.clone());
+            row3_spans.push(prev_b);
+            row3_spans.push(sp.clone());
+            row3_spans.push(play_b);
+            row3_spans.push(sp.clone());
+            row3_spans.push(next_b);
+            row3_spans.push(sp);
+            row3_spans.push(rep_b);
+            let row3 = Line::from(row3_spans);
 
             Paragraph::new(vec![row1, row2, row3])
                 .alignment(Alignment::Center)
