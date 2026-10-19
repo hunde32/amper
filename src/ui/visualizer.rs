@@ -10,6 +10,7 @@ pub struct VisualizerWidget<'a> {
     pub tick_counter: u64,
     pub theme: &'a Theme,
     pub sample_rate: &'a str,
+    pub audio_energy: f32,
 }
 
 impl<'a> Widget for VisualizerWidget<'a> {
@@ -54,6 +55,13 @@ impl<'a> Widget for VisualizerWidget<'a> {
         let bar_chars = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
         let mut row_chars: Vec<char> = Vec::with_capacity(width);
 
+        // Reacts dynamically to real music beats while preserving the smooth sliding wave motion
+        let energy_mod = if self.is_playing {
+            0.35 + self.audio_energy.clamp(0.0, 1.0) * 0.65
+        } else {
+            0.10
+        };
+
         for x in 0..width {
             let dist_from_center = (x as f32 - center).abs() / center;
             // Envelope that peaks in center and tapers toward edges
@@ -63,8 +71,8 @@ impl<'a> Widget for VisualizerWidget<'a> {
                 let wave1 = (x as f32 * 0.35 + t).sin() * 0.5 + 0.5;
                 let wave2 = (x as f32 * 0.18 - t * 1.5).cos() * 0.5 + 0.5;
                 let wave3 = (x as f32 * 0.6 + t * 0.7).sin() * 0.5 + 0.5;
-                let combined = (wave1 * 0.5 + wave2 * 0.3 + wave3 * 0.2) * envelope;
-                combined.clamp(0.0, 1.0)
+                let wave = (wave1 * 0.5 + wave2 * 0.3 + wave3 * 0.2) * energy_mod * envelope;
+                wave.clamp(0.0, 1.0)
             } else {
                 0.05 * envelope
             };

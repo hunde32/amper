@@ -78,12 +78,13 @@ impl<'a> Widget for DiscView<'a> {
         // chunks[8] is the spacer row between controls and lower telemetry
         let bottom_area     = chunks[9];
 
-        // ── 0. Visualizer (preserved exactly as user requested) ───────────────────
+        // ── 0. Visualizer (preserved smooth sliding wave, pulsing with music) ────
         VisualizerWidget {
             is_playing,
             tick_counter: self.tick_counter,
             theme: self.theme,
             sample_rate: "MPD 44.1 kHz",
+            audio_energy: self.audio_viz.get_overall_energy(),
         }
         .render(viz_area, buf);
 

@@ -14,6 +14,7 @@ const NUM_BANDS: usize = 24;
 pub struct VisualizerData {
     pub bands: [f32; NUM_BANDS],
     pub peaks: [f32; NUM_BANDS],
+    pub overall_energy: f32,
 }
 
 impl Default for VisualizerData {
@@ -21,6 +22,7 @@ impl Default for VisualizerData {
         Self {
             bands: [0.0; NUM_BANDS],
             peaks: [0.0; NUM_BANDS],
+            overall_energy: 0.0,
         }
     }
 }
@@ -72,6 +74,11 @@ impl AudioVisualizer {
             }
             (out_bands, out_peaks)
         }
+    }
+
+    /// Retrieve smoothed overall audio energy [0.0, 1.0] for pulsing animations.
+    pub fn get_overall_energy(&self) -> f32 {
+        self.data.lock().map(|d| d.overall_energy).unwrap_or(0.0)
     }
 }
 
@@ -159,6 +166,8 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
     let mut smoothed_bands = [0.0f32; NUM_BANDS];
     let mut peak_values = [0.0f32; NUM_BANDS];
     let mut peak_speeds = [0.0f32; NUM_BANDS];
+    let mut dynamic_ceiling_db = -6.0f32;
+    let mut smoothed_energy = 0.0f32;
 
     let mut pcm_buffer = [0i16; FFT_SIZE];
     let mut raw_bytes = [0u8; FFT_SIZE * 2];
@@ -178,7 +187,7 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
                 break;
             }
 
-            // Convert 16-bit little-endian PCM to float samples
+            // Convert 16-bit little-endian PCM to float samples [-1.0, 1.0]
             for i in 0..FFT_SIZE {
                 let lo = raw_bytes[i * 2] as u16;
                 let hi = raw_bytes[i * 2 + 1] as i16;
@@ -198,30 +207,62 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
 
             fft.process(&mut complex_buffer);
 
-            // Compute energy in each frequency band
+            // Compute normalized energy in each frequency band
+            let mut band_dbs = [0.0f32; NUM_BANDS];
             for (b, &(start_bin, end_bin)) in bin_ranges.iter().enumerate() {
                 let mut sum_mag = 0.0f32;
+                let mut max_mag = 0.0f32;
                 let count = (end_bin - start_bin).max(1);
+
                 for k in start_bin..end_bin {
                     if k < complex_buffer.len() / 2 {
                         let c = complex_buffer[k];
-                        let mag = (c.re * c.re + c.im * c.im).sqrt();
+                        // True normalized magnitude (Hann coherent gain on 512 pt FFT)
+                        let mag = (c.re * c.re + c.im * c.im).sqrt() / 128.0;
                         sum_mag += mag;
+                        if mag > max_mag {
+                            max_mag = mag;
+                        }
                     }
                 }
-                let avg_mag = sum_mag / (count as f32);
 
-                // Boost higher frequencies for perceptual balance (pink noise tilt compensation)
-                let tilt_factor = 1.0 + (b as f32 * 0.12);
-                let raw_val = (avg_mag * tilt_factor * 12.0).clamp(0.0, 1.0);
+                let avg_mag = sum_mag / (count as f32);
+                let band_mag = max_mag * 0.65 + avg_mag * 0.35;
+
+                // Gentle natural acoustic curve (avoids artificial high-beat saturation)
+                let eq_weight = 1.0 + (b as f32 / NUM_BANDS as f32) * 0.75;
+                let weighted_mag = band_mag * eq_weight;
+
+                // Decibels: 0 dB is full-scale sine
+                let db = 20.0 * weighted_mag.max(1e-5).log10();
+                band_dbs[b] = db;
+            }
+
+            // Adaptive Automatic Gain Control (AGC):
+            // Prevents clipping at the top while maintaining responsiveness
+            let current_max_db = band_dbs.iter().copied().fold(-100.0f32, f32::max);
+            if current_max_db > dynamic_ceiling_db {
+                dynamic_ceiling_db = dynamic_ceiling_db * 0.85 + current_max_db * 0.15;
+            } else {
+                dynamic_ceiling_db = (dynamic_ceiling_db - 0.03).max(-24.0);
+            }
+
+            let floor_db = dynamic_ceiling_db - 36.0; // 36 dB visible dynamic range
+
+            // Apply smoothing and peak physics
+            for b in 0..NUM_BANDS {
+                let db = band_dbs[b];
+                let norm = (db - floor_db) / (dynamic_ceiling_db - floor_db);
+                // Allow peaks to breathe naturally up to 0.90 – NEVER stuck at 1.0
+                let target_val = norm.clamp(0.0, 0.90);
 
                 // Fluid attack & gravity decay
-                if raw_val > smoothed_bands[b] {
-                    // Fast attack on musical transients (beats, snares, kicks)
-                    smoothed_bands[b] = smoothed_bands[b] * 0.25 + raw_val * 0.75;
+                if target_val > smoothed_bands[b] {
+                    // Quick, crisp rise on beats
+                    smoothed_bands[b] = smoothed_bands[b] * 0.35 + target_val * 0.65;
                 } else {
                     // Smooth exponential gravity decay
-                    smoothed_bands[b] = (smoothed_bands[b] * 0.88).max(0.0);
+                    smoothed_bands[b] = (smoothed_bands[b] * 0.84).max(0.0);
                 }
 
                 // Peak hold & drop
@@ -229,15 +270,24 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
                     peak_values[b] = smoothed_bands[b];
                     peak_speeds[b] = 0.0;
                 } else {
-                    peak_speeds[b] += 0.008; // gravity acceleration
+                    peak_speeds[b] += 0.010; // gravity acceleration
                     peak_values[b] = (peak_values[b] - peak_speeds[b]).max(0.0);
                 }
+            }
+
+            // Calculate overall energy (primarily low-to-mid frequencies)
+            let bass_mid_avg: f32 = smoothed_bands[..12].iter().sum::<f32>() / 12.0;
+            if bass_mid_avg > smoothed_energy {
+                smoothed_energy = smoothed_energy * 0.4 + bass_mid_avg * 0.6;
+            } else {
+                smoothed_energy = (smoothed_energy * 0.88).max(0.0);
             }
 
             // Update shared state
             if let Ok(mut lock) = data.lock() {
                 lock.bands = smoothed_bands;
                 lock.peaks = peak_values;
+                lock.overall_energy = smoothed_energy;
             }
 
             // Sleep ~20ms (~50 FPS visualizer sampling)
@@ -248,10 +298,10 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
     }
 }
 
-/// Compute logarithmic frequency bins from ~40 Hz up to ~10 kHz
+/// Compute logarithmic frequency bins from ~45 Hz up to ~9 kHz
 fn compute_frequency_bins(num_bands: usize, fft_size: usize, sample_rate: f32) -> Vec<(usize, usize)> {
-    let min_freq = 40.0f32;
-    let max_freq = 9000.0f32;
+    let min_freq = 45.0f32;
+    let max_freq = 8500.0f32;
     let nyquist = sample_rate / 2.0;
 
     let mut ranges = Vec::with_capacity(num_bands);
