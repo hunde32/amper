@@ -498,7 +498,9 @@ impl App {
     }
 
     pub fn get_cover_geometry(terminal_size: ratatui::layout::Rect) -> CoverGeometry {
-        let card_width = 72.min(terminal_size.width.saturating_sub(2)).max(28);
+        // ── Card container ────────────────────────────────────────────────────
+        // Balanced width for a sleek cyberpunk music deck (matches reference screenshots)
+        let card_width = 48.min(terminal_size.width.saturating_sub(2)).max(32);
         let card_height = terminal_size.height;
         let card_x = terminal_size.x + (terminal_size.width.saturating_sub(card_width)) / 2;
         let card_y = terminal_size.y;
@@ -509,23 +511,43 @@ impl App {
             height: card_height,
         };
 
-        let body_y = card_y + 1;
-        let body_h = card_height.saturating_sub(2);
+        // ── Cover box position inside the card ───────────────────────────────
+        // Rows above cover box: header (1), visualizer (2) = 3 rows
+        // Rows below cover box: title (1), artist (1), spacer (1), scrubber (1), spacer (1),
+        //                       controls (3), bottom panel (6), toast (1) = 15 rows
+        let above_cover = 3u16;
+        let below_cover = 15u16;
 
-        let cover_box_y = body_y + 2;
-        let cover_box_h = body_h.saturating_sub(14).max(6);
-        let cover_box_w = card_width;
+        let avail_h = card_height.saturating_sub(above_cover + below_cover);
+
+        // In terminal cells (~1:2 aspect ratio), a square image has cols = rows * 2.
+        // We leave 2 rows and 2 cols for the border of the cover box.
+        let max_img_rows = avail_h.saturating_sub(2).max(2);
+        let max_img_cols = card_width.saturating_sub(4).max(4);
+
+        let img_rows = max_img_rows.min(max_img_cols / 2).max(2);
+        let img_cols = img_rows * 2;
+
+        // The cover box wraps the image tightly with a 1-cell border on all sides:
+        let cover_box_w = img_cols + 2;
+        let cover_box_h = img_rows + 2;
+
+        // Center the cover box within the available space
+        let cover_box_x = card_x + (card_width.saturating_sub(cover_box_w)) / 2;
+        let cover_box_y = card_y + above_cover + (avail_h.saturating_sub(cover_box_h)) / 2;
+
         let cover_box_rect = ratatui::layout::Rect {
-            x: card_x,
+            x: cover_box_x,
             y: cover_box_y,
             width: cover_box_w,
             height: cover_box_h,
         };
 
-        let inner_x = cover_box_rect.x + 1;
-        let inner_y = cover_box_rect.y + 1;
-        let inner_w = cover_box_rect.width.saturating_sub(2);
-        let inner_h = cover_box_rect.height.saturating_sub(2);
+        // Inner rect (image fits 100% edge-to-edge inside the 1-cell border)
+        let inner_x = cover_box_x + 1;
+        let inner_y = cover_box_y + 1;
+        let inner_w = img_cols;
+        let inner_h = img_rows;
         let inner_rect = ratatui::layout::Rect {
             x: inner_x,
             y: inner_y,
@@ -533,19 +555,8 @@ impl App {
             height: inner_h,
         };
 
-        // Strict padding guarantees image never touches or bleeds outside borders
-        let pad_v = if inner_h >= 14 { 2 } else if inner_h >= 6 { 1 } else { 0 };
-        let pad_h = if inner_w >= 40 { 4 } else { 2 };
-
-        let avail_rows = inner_h.saturating_sub(pad_v * 2).max(2);
-        let avail_cols = inner_w.saturating_sub(pad_h * 2).max(4);
-
-        // Standard terminal cell aspect ratio (width:height ~ 1:2)
-        let img_rows = avail_rows.min(avail_cols / 2).max(2);
-        let img_cols = img_rows * 2;
-
-        let img_x = inner_x + (inner_w.saturating_sub(img_cols)) / 2;
-        let img_y = inner_y + (inner_h.saturating_sub(img_rows)) / 2;
+        let img_x = inner_x;
+        let img_y = inner_y;
 
         CoverGeometry {
             card_rect,
@@ -597,19 +608,25 @@ impl App {
                 let row = mouse.row;
 
                 // Clicking cover box toggles cover mode (Static vs Vinyl)
-                if row >= geom.cover_box_rect.y && row < geom.cover_box_rect.y + geom.cover_box_rect.height {
+                if row >= geom.cover_box_rect.y
+                    && row < geom.cover_box_rect.y + geom.cover_box_rect.height
+                    && col >= geom.cover_box_rect.x
+                    && col < geom.cover_box_rect.x + geom.cover_box_rect.width
+                {
                     self.toggle_cover_mode();
                     return;
                 }
 
-                let title_y = geom.cover_box_rect.y + geom.cover_box_rect.height;
-                let scrubber_y = title_y + 2;
-                let controls_y = scrubber_y + 1;
-                let bottom_y = controls_y + 3;
+                // Vertical positions matching DiscView chunks layout
+                let body_h = geom.card_rect.height.saturating_sub(2);
+                let title_y = 1 + body_h.saturating_sub(14);
+                let scrubber_y = title_y + 3;
+                let controls_y = title_y + 5;
+                let bottom_y = title_y + 8;
 
                 // Scrubber seek click
                 if row == scrubber_y {
-                    let bar_w = 36.min(geom.card_rect.width.saturating_sub(14)) as f64;
+                    let bar_w = (geom.card_rect.width.saturating_sub(14) as usize).max(4) as f64;
                     let bar_start = (cx as f64) - (bar_w / 2.0);
                     let bar_end = (cx as f64) + (bar_w / 2.0);
                     if (col as f64) >= bar_start && (col as f64) <= bar_end && self.mpd_status.duration > 0.0 {
@@ -623,26 +640,26 @@ impl App {
 
                 // Controls row click (3 rows)
                 if row >= controls_y && row < controls_y + 3 {
-                    // Center button: Play/Pause (cx - 5 ..= cx + 5)
-                    if col >= cx.saturating_sub(5) && col <= cx + 5 {
+                    // Center button: Play/Pause (cx - 4 ..= cx + 4)
+                    if col >= cx.saturating_sub(4) && col <= cx + 4 {
                         self.clicked_button = Some(("play", Instant::now()));
                         let _ = self.mpd.toggle_pause();
                         self.refresh_mpd(false);
-                    } else if col >= cx.saturating_sub(13) && col <= cx.saturating_sub(6) {
+                    } else if col >= cx.saturating_sub(11) && col <= cx.saturating_sub(6) {
                         self.clicked_button = Some(("prev", Instant::now()));
                         let _ = self.mpd.previous();
                         self.set_status_message("Previous track");
                         self.refresh_mpd(false);
-                    } else if col >= cx + 6 && col <= cx + 13 {
+                    } else if col >= cx + 6 && col <= cx + 11 {
                         self.clicked_button = Some(("next", Instant::now()));
                         let _ = self.mpd.next();
                         self.set_status_message("Next track");
                         self.refresh_mpd(false);
-                    } else if col >= cx.saturating_sub(22) && col <= cx.saturating_sub(14) {
+                    } else if col >= cx.saturating_sub(18) && col <= cx.saturating_sub(12) {
                         self.clicked_button = Some(("shuffle", Instant::now()));
                         let _ = self.mpd.toggle_random();
                         self.refresh_mpd(false);
-                    } else if col >= cx + 14 && col <= cx + 22 {
+                    } else if col >= cx + 12 && col <= cx + 18 {
                         self.clicked_button = Some(("repeat", Instant::now()));
                         let _ = self.mpd.toggle_repeat();
                         self.refresh_mpd(false);

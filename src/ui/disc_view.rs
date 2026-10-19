@@ -38,337 +38,287 @@ impl<'a> Widget for DiscView<'a> {
 
         let is_playing = self.status.state == PlaybackState::Play;
 
+        // ── Layout ──────────────────────────────────────────────────────────────
+        //  Row 0  │ 2 lines  │  Visualizer banner + waveform
+        //  Row 1  │ Min(6)   │  Cover art box (fills most of available space)
+        //  Row 2  │ 1 line   │  Track title  (bold, large)
+        //  Row 3  │ 1 line   │  Artist name  (dimmer)
+        //  Row 4  │ 1 line   │  blank spacer
+        //  Row 5  │ 1 line   │  Scrubber bar  elapsed ██░░░ total  (STANDALONE)
+        //  Row 6  │ 1 line   │  blank spacer
+        //  Row 7  │ 3 lines  │  Controls  [ ⇄ ] |<< [  ||  ] >>| [ ↻ ]
+        //  Row 8  │ 6 lines  │  Telemetry / Visualizer / Lyrics / Metadata panel
+        // ────────────────────────────────────────────────────────────────────────
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // 1. Visualizer banner
-                Constraint::Min(6),    // 2. Cover / Disc container
-                Constraint::Length(2), // 3. Title & Artist
-                Constraint::Length(1), // 4. Scrubber
-                Constraint::Length(3), // 5. Boxed Cyberpunk controls
-                Constraint::Length(6), // 6. Customizable bottom panel
+                Constraint::Length(2), // 0  visualizer
+                Constraint::Min(6),    // 1  cover box
+                Constraint::Length(1), // 2  title
+                Constraint::Length(1), // 3  artist
+                Constraint::Length(1), // 4  spacer
+                Constraint::Length(1), // 5  scrubber
+                Constraint::Length(1), // 6  spacer
+                Constraint::Length(3), // 7  controls (3 explicit rows)
+                Constraint::Length(6), // 8  bottom panel
             ])
             .split(area);
 
-        let viz_area = chunks[0];
-        let cover_box_area = chunks[1];
-        let title_area = chunks[2];
-        let scrubber_area = chunks[3];
-        let controls_area = chunks[4];
-        let bottom_area = chunks[5];
+        let viz_area       = chunks[0];
+        let _cover_box_area = chunks[1];
+        let title_area    = chunks[2];
+        let artist_area   = chunks[3];
+        // chunks[4] is the spacer row – we do nothing with it
+        let scrubber_area = chunks[5];
+        // chunks[6] is the spacer row – we do nothing with it
+        let controls_area = chunks[7];
+        let bottom_area   = chunks[8];
 
-        // --- 1. Symmetrical Waveform Visualizer ---
-        let viz = VisualizerWidget {
+        // ── 0. Visualizer ───────────────────────────────────────────────────────
+        VisualizerWidget {
             is_playing,
             tick_counter: self.tick_counter,
             theme: self.theme,
             sample_rate: "MPD 44.1 kHz",
-        };
-        viz.render(viz_area, buf);
+        }
+        .render(viz_area, buf);
 
-        // --- 2. Cover / Disc Container ---
-        let mode_tag = match self.cover_mode {
-            CoverMode::StaticCard => " [STATIC COVER (v)] ",
-            CoverMode::SpinningVinyl => " [SPINNING VINYL (v)] ",
-        };
+        // ── 1. Cover / Disc Container ───────────────────────────────────────────
+        {
+            let mode_tag = match self.cover_mode {
+                CoverMode::StaticCard    => " [STATIC (v)] ",
+                CoverMode::SpinningVinyl => " [VINYL  (v)] ",
+            };
 
-        let cover_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(self.theme.border_style())
-            .title_bottom(Span::styled(mode_tag, self.theme.dim()))
-            .style(Style::default().bg(Color::Reset));
-        cover_block.render(cover_box_area, buf);
+            let cover_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(self.theme.border_style())
+                .title_bottom(Span::styled(mode_tag, self.theme.dim()))
+                .style(Style::default().bg(Color::Reset));
+            cover_block.render(self.geom.cover_box_rect, buf);
 
-        // Inner artwork bounds
-        let (title_str, artist_str) = if let Some(s) = self.song {
-            (s.display_title(), s.display_artist())
-        } else {
-            ("Corolla Club".to_string(), "NOXYGEN".to_string())
-        };
-
-        if self.cover_art.supports_kitty {
-            // Keep cells clear so Kitty GPU graphics display crisply without text interference
-            for r in 0..self.geom.img_rows {
-                let cy = self.geom.img_y + r;
-                for c in 0..self.geom.img_cols {
-                    let cx = self.geom.img_x + c;
-                    if cx < buf.area.width && cy < buf.area.height {
+            if self.cover_art.supports_kitty {
+                // Blank the cells so the Kitty GPU image shows through cleanly
+                for r in 0..self.geom.img_rows {
+                    let cy = self.geom.img_y + r;
+                    if cy >= buf.area.height { break; }
+                    for c in 0..self.geom.img_cols {
+                        let cx = self.geom.img_x + c;
+                        if cx >= buf.area.width { break; }
                         let cell = &mut buf[(cx, cy)];
                         cell.set_char(' ');
                         cell.set_bg(Color::Reset);
+                        cell.set_fg(Color::Reset);
+                    }
+                }
+            } else {
+                // Half-block fallback for non-Kitty terminals
+                let pixel_w = self.geom.img_cols as usize;
+                let pixel_h = (self.geom.img_rows * 2) as usize;
+
+                let frame_colors = match self.cover_mode {
+                    CoverMode::StaticCard => self
+                        .cover_art
+                        .render_static_frame(pixel_w, pixel_h, self.theme.accent),
+                    CoverMode::SpinningVinyl => self
+                        .cover_art
+                        .render_vinyl_frame(pixel_w, pixel_h, self.rotation_angle, self.theme.accent),
+                };
+
+                let inner = self.geom.inner_rect;
+                for r in 0..self.geom.img_rows {
+                    let py_top = (r * 2) as usize;
+                    let py_bot = (r * 2 + 1) as usize;
+                    let cy = self.geom.img_y + r;
+                    if cy >= inner.y + inner.height { break; }
+
+                    for c in 0..self.geom.img_cols {
+                        let cx = self.geom.img_x + c;
+                        if cx >= inner.x + inner.width { break; }
+                        if py_top < frame_colors.len()
+                            && py_bot < frame_colors.len()
+                            && (c as usize) < frame_colors[0].len()
+                        {
+                            let cell = &mut buf[(cx, cy)];
+                            cell.set_char('▀');
+                            cell.set_fg(frame_colors[py_top][c as usize]);
+                            cell.set_bg(frame_colors[py_bot][c as usize]);
+                        }
                     }
                 }
             }
-        } else {
-            // High quality half-block fallback for terminals without Kitty protocol
-            let pixel_width = self.geom.img_cols as usize;
-            let pixel_height = (self.geom.img_rows * 2) as usize;
+        }
 
-            let frame_colors = match self.cover_mode {
-                CoverMode::StaticCard => {
-                    self.cover_art.render_static_frame(pixel_width, pixel_height, self.theme.accent)
-                }
-                CoverMode::SpinningVinyl => {
-                    self.cover_art.render_vinyl_frame(pixel_width, pixel_height, self.rotation_angle, self.theme.accent)
-                }
+        // ── 2 & 3. Track title and artist ───────────────────────────────────────
+        {
+            let (title_str, artist_str) = if let Some(s) = self.song {
+                (s.display_title(), s.display_artist())
+            } else {
+                ("No Track".to_string(), "—".to_string())
             };
 
-            for r in 0..self.geom.img_rows {
-                let py_top = (r * 2) as usize;
-                let py_bot = (r * 2 + 1) as usize;
-                let cur_y = self.geom.img_y + r;
+            let max_w = area.width.saturating_sub(4) as usize;
 
-                if cur_y >= self.geom.inner_rect.y + self.geom.inner_rect.height {
-                    break;
-                }
-
-                for c in 0..self.geom.img_cols {
-                    let cur_x = self.geom.img_x + c;
-                    if cur_x >= self.geom.inner_rect.x + self.geom.inner_rect.width {
-                        break;
-                    }
-
-                    if py_top < frame_colors.len() && py_bot < frame_colors.len() && (c as usize) < frame_colors[0].len() {
-                        let top_col = frame_colors[py_top][c as usize];
-                        let bot_col = frame_colors[py_bot][c as usize];
-
-                        let cell = &mut buf[(cur_x, cur_y)];
-                        cell.set_char('▀');
-                        cell.set_fg(top_col);
-                        cell.set_bg(bot_col);
-                    }
-                }
+            let mut display_title = title_str.to_uppercase();
+            if display_title.len() > max_w && max_w > 4 {
+                display_title.truncate(max_w - 3);
+                display_title.push_str("...");
             }
+
+            let mut display_artist = artist_str.clone();
+            if display_artist.len() > max_w && max_w > 4 {
+                display_artist.truncate(max_w - 3);
+                display_artist.push_str("...");
+            }
+
+            Paragraph::new(Line::from(Span::styled(display_title, self.theme.primary_bold())))
+                .alignment(Alignment::Center)
+                .render(title_area, buf);
+
+            Paragraph::new(Line::from(Span::styled(display_artist, self.theme.secondary())))
+                .alignment(Alignment::Center)
+                .render(artist_area, buf);
         }
 
-        // Resolution / format badge in bottom-right corner of inner frame
-        let badge_text = match self.cover_mode {
-            CoverMode::StaticCard => "128x128_PXL",
-            CoverMode::SpinningVinyl => "33_RPM",
-        };
-        let badge_x = self.geom.inner_rect.x + self.geom.inner_rect.width.saturating_sub(badge_text.len() as u16 + 1);
-        let badge_y = self.geom.inner_rect.y + self.geom.inner_rect.height.saturating_sub(1);
-        if badge_x < buf.area.width && badge_y < buf.area.height {
-            buf.set_string(badge_x, badge_y, badge_text, self.theme.dim());
+        // ── 5. Scrubber – completely isolated on its own row ────────────────────
+        {
+            let elapsed  = self.status.elapsed;
+            let duration = self.status.duration.max(0.1);
+            let progress = (elapsed / duration).clamp(0.0, 1.0);
+
+            let elapsed_str  = format_time(elapsed);
+            let duration_str = format_time(duration);
+
+            // Reserve exactly 5 chars for each timestamp + 1 space gap each side
+            let time_reserve = (elapsed_str.len() + duration_str.len() + 4) as u16;
+            let bar_total = scrubber_area.width.saturating_sub(time_reserve) as usize;
+            let bar_total = bar_total.max(4);
+
+            let filled  = ((progress * bar_total as f64).round() as usize).min(bar_total);
+            let unfilled = bar_total - filled;
+
+            // Use a thin progress indicator (▬ fill, ─ unfill) so it sits cleanly on one line
+            let filled_str   = "▬".repeat(filled);
+            let unfilled_str = "─".repeat(unfilled);
+
+            let scrubber_line = Line::from(vec![
+                Span::styled(format!("{} ", elapsed_str),  self.theme.dim()),
+                Span::styled(filled_str,                   self.theme.accent()),
+                Span::styled(unfilled_str,                 self.theme.dim()),
+                Span::styled(format!(" {}", duration_str), self.theme.dim()),
+            ]);
+
+            Paragraph::new(scrubber_line)
+                .alignment(Alignment::Center)
+                .render(scrubber_area, buf);
         }
 
-        // --- 3. Track Title & Artist ---
-        let max_w = cover_box_area.width.saturating_sub(4) as usize;
-        let mut display_title = title_str.to_uppercase();
-        if display_title.len() > max_w && max_w > 3 {
-            display_title.truncate(max_w - 3);
-            display_title.push_str("...");
-        }
-        let mut display_artist = artist_str.to_uppercase();
-        if display_artist.len() > max_w && max_w > 3 {
-            display_artist.truncate(max_w - 3);
-            display_artist.push_str("...");
-        }
+        // ── 7. Controls – 3 rows, perfectly contained in controls_area ──────────
+        {
+            let now = Instant::now();
+            let clicked = self.clicked_button.and_then(|(name, time)| {
+                if now.duration_since(time).as_millis() < 350 { Some(name) } else { None }
+            });
 
-        let title_line = Line::from(vec![Span::styled(
-            display_title,
-            self.theme.primary_bold(),
-        )]);
-        let artist_line = Line::from(vec![Span::styled(
-            display_artist,
-            self.theme.secondary(),
-        )]);
+            let shuffle_on = self.status.random || clicked == Some("shuffle");
+            let prev_lit   = clicked == Some("prev");
+            let play_lit   = clicked == Some("play");
+            let next_lit   = clicked == Some("next");
+            let repeat_on  = self.status.repeat || clicked == Some("repeat");
 
-        let title_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(title_area);
+            // ── Style tokens ──────────────────────────────────────────────────
+            let bdim   = self.theme.border_style();  // inactive box border
+            let tnorm  = Style::default().fg(self.theme.text_primary).bg(Color::Reset);
 
-        Paragraph::new(title_line).alignment(Alignment::Center).render(title_chunks[0], buf);
-        Paragraph::new(artist_line).alignment(Alignment::Center).render(title_chunks[1], buf);
+            // Active toggle buttons (shuffle/repeat): accent-filled box
+            let pill_on = Style::default()
+                .bg(self.theme.accent)
+                .fg(Color::Rgb(15, 15, 25))
+                .add_modifier(Modifier::BOLD);
 
-        // --- 4. Scrubber Progress Bar ---
-        let elapsed = self.status.elapsed;
-        let duration = self.status.duration.max(0.1);
-        let progress = (elapsed / duration).clamp(0.0, 1.0);
+            // Center play/pause button: large solid filled block
+            let play_bg = if play_lit { Color::White } else { self.theme.accent };
+            let play_fg = if play_lit { self.theme.accent } else { Color::Rgb(10, 10, 20) };
+            let play_sty = Style::default()
+                .bg(play_bg)
+                .fg(play_fg)
+                .add_modifier(Modifier::BOLD);
 
-        let elapsed_str = format_time(elapsed);
-        let duration_str = format_time(duration);
+            // Clicked prev/next: momentary accent fill
+            let prev_sty = if prev_lit { pill_on } else { tnorm.add_modifier(Modifier::BOLD) };
+            let next_sty = if next_lit { pill_on } else { tnorm.add_modifier(Modifier::BOLD) };
 
-        let time_width = (elapsed_str.len() + duration_str.len() + 6) as u16;
-        let bar_width = (scrubber_area.width.saturating_sub(time_width) as usize).max(4);
-
-        let filled_count = ((progress * bar_width as f64).round() as usize).min(bar_width);
-        let unfilled_count = bar_width.saturating_sub(filled_count);
-
-        let filled_bar = "█".repeat(filled_count);
-        let unfilled_bar = "░".repeat(unfilled_count);
-
-        let scrubber_line = Line::from(vec![
-            Span::styled(format!("{} ", elapsed_str), self.theme.dim()),
-            Span::styled(filled_bar, self.theme.accent()),
-            Span::styled(unfilled_bar, self.theme.dim()),
-            Span::styled(format!(" {}", duration_str), self.theme.dim()),
-        ]);
-
-        Paragraph::new(scrubber_line).alignment(Alignment::Center).render(scrubber_area, buf);
-
-        // --- 5. Boxed Controls with Filled Active Background (Matching Reference Screenshot) ---
-        let now = Instant::now();
-        let clicked = self.clicked_button.and_then(|(name, time)| {
-            if now.duration_since(time).as_millis() < 350 {
-                Some(name)
+            // ── Shuffle [ ⇄ ] ────────────────────────────────────────────────
+            let (sht, shm, shb) = if shuffle_on {
+                (Span::styled("┌───┐", pill_on),
+                 Span::styled("│ ⇄ │", pill_on),
+                 Span::styled("└───┘", pill_on))
             } else {
-                None
-            }
-        });
+                (Span::styled("┌───┐", bdim),
+                 Span::styled("│ ⇄ │", tnorm),
+                 Span::styled("└───┘", bdim))
+            };
 
-        let shuffle_active = self.status.random || clicked == Some("shuffle");
-        let prev_active = clicked == Some("prev");
-        let play_clicked = clicked == Some("play");
-        let next_active = clicked == Some("next");
-        let repeat_active = self.status.repeat || clicked == Some("repeat");
+            // ── Repeat [ ↻ ] ─────────────────────────────────────────────────
+            let (ret, rem, reb) = if repeat_on {
+                (Span::styled("┌───┐", pill_on),
+                 Span::styled("│ ↻ │", pill_on),
+                 Span::styled("└───┘", pill_on))
+            } else {
+                (Span::styled("┌───┐", bdim),
+                 Span::styled("│ ↻ │", tnorm),
+                 Span::styled("└───┘", bdim))
+            };
 
-        let border_dim = self.theme.border_style();
-        let text_norm = Style::default().fg(self.theme.text_primary).bg(Color::Reset);
-
-        // 1. Center Play/Pause button: A LARGE, TALL 3-ROW SOLID FILLED ACCENT BLOCK (matching screenshot)
-        let play_bg_col = if play_clicked {
-            Color::Rgb(255, 255, 255)
-        } else {
-            self.theme.accent
-        };
-        let play_fg_col = if play_clicked {
-            self.theme.accent
-        } else {
-            Color::Rgb(255, 255, 255)
-        };
-        let play_block_style = Style::default()
-            .bg(play_bg_col)
-            .fg(play_fg_col)
-            .add_modifier(Modifier::BOLD);
-
-        let play_icon = if is_playing { "   ||    " } else { "    ▶    " };
-
-        let p_top = Span::styled("         ", play_block_style);
-        let p_mid = Span::styled(play_icon, play_block_style);
-        let p_bot = Span::styled("         ", play_block_style);
-
-        // 2. Shuffle [ ⇄ ] (Left boxed button, 5 chars wide)
-        let active_pill = Style::default()
-            .bg(self.theme.accent)
-            .fg(Color::Rgb(20, 20, 26))
-            .add_modifier(Modifier::BOLD);
-
-        let (shuf_t, shuf_m, shuf_b) = if shuffle_active {
-            (
-                Span::styled("┌───┐", active_pill),
-                Span::styled("│ ⇄ │", active_pill),
-                Span::styled("└───┘", active_pill),
-            )
-        } else {
-            (
-                Span::styled("┌───┐", border_dim),
-                Span::styled("│ ⇄ │", text_norm),
-                Span::styled("└───┘", border_dim),
-            )
-        };
-
-        // 3. Repeat [ ↻ ] (Right boxed button, 5 chars wide)
-        let (rep_t, rep_m, rep_b) = if repeat_active {
-            (
-                Span::styled("┌───┐", active_pill),
-                Span::styled("│ ↻ │", active_pill),
-                Span::styled("└───┘", active_pill),
-            )
-        } else {
-            (
-                Span::styled("┌───┐", border_dim),
-                Span::styled("│ ↻ │", text_norm),
-                Span::styled("└───┘", border_dim),
-            )
-        };
-
-        // 4. Previous |<< (Mid-left sleek text, 5 chars wide)
-        let (prev_t, prev_m, prev_b) = if prev_active {
-            (
-                Span::styled("┌───┐", active_pill),
-                Span::styled("|<< ", active_pill),
-                Span::styled("└───┘", active_pill),
-            )
-        } else {
-            (
+            // ── Previous  |<< ────────────────────────────────────────────────
+            let (pvt, pvm, pvb) = (
                 Span::raw("     "),
-                Span::styled(" |<< ", text_norm.add_modifier(Modifier::BOLD)),
+                Span::styled(" |<< ", prev_sty),
                 Span::raw("     "),
-            )
-        };
+            );
 
-        // 5. Next >>| (Mid-right sleek text, 5 chars wide)
-        let (next_t, next_m, next_b) = if next_active {
-            (
-                Span::styled("┌───┐", active_pill),
-                Span::styled(" >>|", active_pill),
-                Span::styled("└───┘", active_pill),
-            )
-        } else {
-            (
+            // ── Next  >>| ────────────────────────────────────────────────────
+            let (nxt, nxm, nxb) = (
                 Span::raw("     "),
-                Span::styled(" >>| ", text_norm.add_modifier(Modifier::BOLD)),
+                Span::styled(" >>| ", next_sty),
                 Span::raw("     "),
-            )
-        };
+            );
 
-        let row1 = Line::from(vec![
-            shuf_t,
-            Span::raw("   "),
-            prev_t,
-            Span::raw("   "),
-            p_top,
-            Span::raw("   "),
-            next_t,
-            Span::raw("   "),
-            rep_t,
-        ]);
+            // ── Play / Pause – center tall filled block ───────────────────────
+            let play_icon = if is_playing { "   ||   " } else { "   ▶    " };
+            let (pt, pm, pb) = (
+                Span::styled("        ", play_sty),
+                Span::styled(play_icon,  play_sty),
+                Span::styled("        ", play_sty),
+            );
 
-        let row2 = Line::from(vec![
-            shuf_m,
-            Span::raw("   "),
-            prev_m,
-            Span::raw("   "),
-            p_mid,
-            Span::raw("   "),
-            next_m,
-            Span::raw("   "),
-            rep_m,
-        ]);
+            // ── Spacers between buttons ───────────────────────────────────────
+            // We use a single space between groups so the play button stands out
+            let sp = Span::raw("  ");
 
-        let row3 = Line::from(vec![
-            shuf_b,
-            Span::raw("   "),
-            prev_b,
-            Span::raw("   "),
-            p_bot,
-            Span::raw("   "),
-            next_b,
-            Span::raw("   "),
-            rep_b,
-        ]);
+            let row1 = Line::from(vec![sht, sp.clone(), pvt, sp.clone(), pt, sp.clone(), nxt, sp.clone(), ret]);
+            let row2 = Line::from(vec![shm, sp.clone(), pvm, sp.clone(), pm, sp.clone(), nxm, sp.clone(), rem]);
+            let row3 = Line::from(vec![shb, sp.clone(), pvb, sp.clone(), pb, sp.clone(), nxb, sp,           reb]);
 
-        let controls_lines = vec![row1, row2, row3];
-        Paragraph::new(controls_lines).alignment(Alignment::Center).render(controls_area, buf);
+            Paragraph::new(vec![row1, row2, row3])
+                .alignment(Alignment::Center)
+                .render(controls_area, buf);
+        }
 
-        // --- 6. Customizable Bottom Panel ---
-        let bottom_widget = TelemetryWidget {
+        // ── 8. Customisable bottom panel ─────────────────────────────────────────
+        TelemetryWidget {
             song: self.song,
             status: self.status,
             theme: self.theme,
             tick_counter: self.tick_counter,
             mode: self.bottom_mode,
             lyrics_mgr: self.lyrics_mgr,
-        };
-        bottom_widget.render(bottom_area, buf);
+        }
+        .render(bottom_area, buf);
     }
 }
 
 fn format_time(secs: f64) -> String {
-    let total_secs = secs as u64;
-    let mins = total_secs / 60;
-    let s = total_secs % 60;
-    format!("{:02}:{:02}", mins, s)
+    let total = secs as u64;
+    format!("{:02}:{:02}", total / 60, total % 60)
 }

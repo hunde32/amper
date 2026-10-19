@@ -68,18 +68,28 @@ impl<'a> Widget for TelemetryWidget<'a> {
                     "6.3MB".to_string()
                 };
 
+                let left1 = format!(" FMT: {}", ext);
+                let right1 = format!("BIT: {} ", bit_depth);
+                let gap1 = (inner.width as usize).saturating_sub(left1.len() + right1.len());
+
                 let line1 = Line::from(vec![
                     Span::styled(" FMT: ", self.theme.dim()),
-                    Span::styled(format!("{:<14}", ext), self.theme.primary_bold()),
+                    Span::styled(ext, self.theme.primary_bold()),
+                    Span::raw(" ".repeat(gap1)),
                     Span::styled("BIT: ", self.theme.dim()),
-                    Span::styled(bit_depth, self.theme.primary_bold()),
+                    Span::styled(format!("{} ", bit_depth), self.theme.primary_bold()),
                 ]);
+
+                let left2 = format!(" KBPS: {}", kbps);
+                let right2 = format!("SIZE: {} ", est_size_mb);
+                let gap2 = (inner.width as usize).saturating_sub(left2.len() + right2.len());
 
                 let line2 = Line::from(vec![
                     Span::styled(" KBPS: ", self.theme.dim()),
-                    Span::styled(format!("{:<13}", kbps), self.theme.primary_bold()),
+                    Span::styled(kbps, self.theme.primary_bold()),
+                    Span::raw(" ".repeat(gap2)),
                     Span::styled("SIZE: ", self.theme.dim()),
-                    Span::styled(est_size_mb, self.theme.primary_bold()),
+                    Span::styled(format!("{} ", est_size_mb), self.theme.primary_bold()),
                 ]);
 
                 let line3 = Line::from(vec![

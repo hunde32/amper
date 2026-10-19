@@ -97,8 +97,15 @@ fn main() -> Result<()> {
 
                         // Zero-overhead cache: ONLY transmit to Kitty when song, layout, or mode changed!
                         if last_kitty_key.as_ref() != Some(&current_key) {
+                            // Estimate actual pixel size from cell count.
+                            // Kitty typical cell: ~10 px wide × 20 px tall.
+                            // We take the larger dimension so the square PNG fills the area.
+                            let cell_px_w: u32 = 10;
+                            let cell_px_h: u32 = 20;
+                            let size_px = (disc_cols as u32 * cell_px_w)
+                                .max(disc_rows as u32 * cell_px_h);
                             if let Some(png) = app.cover_art.render_highres_cover_png(
-                                360,
+                                size_px,
                                 app.theme.accent,
                                 &t_str,
                                 &a_str,
@@ -149,8 +156,13 @@ fn main() -> Result<()> {
                         };
 
                         if should_render {
+                            let cell_px_w: u32 = 10;
+                            let cell_px_h: u32 = 20;
+                            let size_px = (disc_cols as u32 * cell_px_w)
+                                .max(disc_rows as u32 * cell_px_h)
+                                .max(360);
                             if let Some(png) = app.cover_art.render_highres_vinyl_png(
-                                320,
+                                size_px,
                                 app.rotation_angle,
                                 app.theme.accent,
                                 &t_str,

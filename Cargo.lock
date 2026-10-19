@@ -52,6 +52,7 @@ dependencies = [
  "image",
  "lofty",
  "ratatui",
+ "rayon",
  "serde",
  "serde_json",
  "ureq",

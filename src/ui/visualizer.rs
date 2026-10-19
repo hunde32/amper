@@ -14,7 +14,7 @@ pub struct VisualizerWidget<'a> {
 
 impl<'a> Widget for VisualizerWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.height < 3 || area.width < 15 {
+        if area.height < 2 || area.width < 15 {
             return;
         }
 
