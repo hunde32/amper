@@ -1,9 +1,11 @@
 use crate::app::BottomPanelMode;
+use crate::audio_visualizer::AudioVisualizer;
 use crate::lyrics::LyricsManager;
 use crate::mpd_client::{MpdStatus, PlaybackState, SongInfo};
 use crate::ui::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
@@ -14,6 +16,7 @@ pub struct TelemetryWidget<'a> {
     pub tick_counter: u64,
     pub mode: BottomPanelMode,
     pub lyrics_mgr: &'a LyricsManager,
+    pub audio_viz: &'a AudioVisualizer,
 }
 
 impl<'a> Widget for TelemetryWidget<'a> {
@@ -133,46 +136,56 @@ impl<'a> Widget for TelemetryWidget<'a> {
             }
 
             BottomPanelMode::Visualizer => {
-                // Multi-band graphic equalizer
-                let num_bands = (inner.width as usize / 4).max(6).min(18);
-                let t = self.tick_counter as f32 * 0.15;
-                let bar_chars = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                // Real-time audio spectrum analyzer powered by FFT on live PCM audio
+                let usable_width = (inner.width as usize).saturating_sub(2);
+                let num_bands = (usable_width / 2).max(8).min(24);
+                let (bands, peaks) = self.audio_viz.get_spectrum(num_bands);
 
-                let mut rows: Vec<Line> = Vec::new();
+                let bar_chars = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                let max_h = inner.height as f32;
+
+                let mut rows: Vec<Line> = Vec::with_capacity(inner.height as usize);
                 for r in (0..inner.height as usize).rev() {
                     let mut spans = Vec::new();
-                    spans.push(Span::raw("  "));
+                    // Left margin to center the visualizer
+                    let total_viz_width = num_bands * 2;
+                    let pad = (inner.width as usize).saturating_sub(total_viz_width) / 2;
+                    if pad > 0 {
+                        spans.push(Span::raw(" ".repeat(pad)));
+                    }
 
                     for b in 0..num_bands {
-                        let phase = b as f32 * 0.45;
-                        let amp = if is_playing {
-                            let w1 = (t * 1.5 + phase).sin() * 0.5 + 0.5;
-                            let w2 = (t * 0.8 - phase * 0.7).cos() * 0.5 + 0.5;
-                            (w1 * 0.6 + w2 * 0.4).powf(1.2)
-                        } else {
-                            0.05
-                        };
+                        let amp = bands.get(b).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                        let peak = peaks.get(b).copied().unwrap_or(0.0).clamp(0.0, 1.0);
 
-                        let max_h = inner.height as f32;
-                        let height_val = amp * max_h;
-                        let diff = height_val - r as f32;
+                        let bar_level = amp * max_h;
+                        let peak_level = (peak * max_h).floor() as usize;
 
-                        let ch = if diff >= 1.0 {
-                            '█'
+                        let diff = bar_level - r as f32;
+
+                        let (ch, is_peak) = if diff >= 1.0 {
+                            ('█', false)
                         } else if diff > 0.0 {
                             let idx = (diff * (bar_chars.len() - 1) as f32).round() as usize;
-                            bar_chars[idx.min(bar_chars.len() - 1)]
+                            (bar_chars[idx.min(bar_chars.len() - 1)], false)
+                        } else if r == peak_level && peak_level > 0 {
+                            // Floating peak cap indicator (like hardware meters)
+                            ('▔', true)
                         } else {
-                            ' '
+                            (' ', false)
                         };
 
-                        let bar_style = if r >= (max_h * 0.7) as usize {
+                        let style = if is_peak {
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(ratatui::style::Modifier::BOLD)
+                        } else if r >= (max_h * 0.65) as usize {
                             self.theme.accent_secondary()
                         } else {
                             self.theme.accent()
                         };
 
-                        spans.push(Span::styled(format!("{}   ", ch), bar_style));
+                        spans.push(Span::styled(format!("{} ", ch), style));
                     }
                     rows.push(Line::from(spans));
                 }

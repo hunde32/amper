@@ -1,3 +1,4 @@
+use crate::audio_visualizer::AudioVisualizer;
 use crate::cover_art::CoverArtManager;
 use crate::lyrics::LyricsManager;
 use crate::mpd_client::{MpdClient, MpdStatus, PlaybackState, SongInfo};
@@ -55,6 +56,7 @@ pub struct App {
 
     pub cover_art: CoverArtManager,
     pub lyrics_mgr: LyricsManager,
+    pub audio_viz: AudioVisualizer,
     pub rotation_angle: f32,
     pub tick_counter: u64,
     pub clicked_button: Option<(&'static str, Instant)>,
@@ -83,6 +85,7 @@ impl App {
         let music_dir = mpd.music_dir().cloned();
         let cover_art = CoverArtManager::new(music_dir);
         let lyrics_mgr = LyricsManager::new();
+        let audio_viz = AudioVisualizer::new();
 
         let mut app = Self {
             should_quit: false,
@@ -101,6 +104,7 @@ impl App {
 
             cover_art,
             lyrics_mgr,
+            audio_viz,
             rotation_angle: 0.0,
             tick_counter: 0,
             clicked_button: None,

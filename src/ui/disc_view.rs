@@ -1,4 +1,5 @@
 use crate::app::{BottomPanelMode, CoverGeometry, CoverMode};
+use crate::audio_visualizer::AudioVisualizer;
 use crate::cover_art::CoverArtManager;
 use crate::lyrics::LyricsManager;
 use crate::mpd_client::{MpdStatus, PlaybackState, SongInfo};
@@ -22,6 +23,7 @@ pub struct DiscView<'a> {
     pub cover_mode: CoverMode,
     pub bottom_mode: BottomPanelMode,
     pub lyrics_mgr: &'a LyricsManager,
+    pub audio_viz: &'a AudioVisualizer,
     pub clicked_button: Option<(&'static str, Instant)>,
     pub geom: CoverGeometry,
 }
@@ -362,6 +364,7 @@ impl<'a> Widget for DiscView<'a> {
             tick_counter: self.tick_counter,
             mode: self.bottom_mode,
             lyrics_mgr: self.lyrics_mgr,
+            audio_viz: self.audio_viz,
         }
         .render(bottom_area, buf);
     }

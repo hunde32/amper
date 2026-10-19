@@ -64,6 +64,7 @@ pub fn draw(f: &mut Frame, app: &App) {
                     cover_mode: app.cover_mode,
                     bottom_mode: app.bottom_mode,
                     lyrics_mgr: &app.lyrics_mgr,
+                    audio_viz: &app.audio_viz,
                     clicked_button: app.clicked_button,
                     geom,
                 },

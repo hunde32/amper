@@ -1,4 +1,5 @@
 mod app;
+mod audio_visualizer;
 mod cover_art;
 mod lyrics;
 mod mpd_client;
