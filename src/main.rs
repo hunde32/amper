@@ -2,6 +2,7 @@ mod app;
 mod audio_visualizer;
 mod cover_art;
 mod lyrics;
+mod matrix_rain;
 mod mpd_client;
 mod ui;
 

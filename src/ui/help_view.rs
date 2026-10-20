@@ -12,7 +12,7 @@ pub struct HelpModal<'a> {
 impl<'a> Widget for HelpModal<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let modal_width = 54.min(area.width.saturating_sub(4));
-        let modal_height = 20.min(area.height.saturating_sub(2));
+        let modal_height = 22.min(area.height.saturating_sub(2));
 
         let modal_x = area.x + (area.width.saturating_sub(modal_width)) / 2;
         let modal_y = area.y + (area.height.saturating_sub(modal_height)) / 2;
@@ -70,6 +70,10 @@ impl<'a> Widget for HelpModal<'a> {
             Line::from(vec![
                 Span::styled(" [m / b]        ", self.theme.accent()),
                 Span::styled("Cycle Bottom Panel (Telem/Visual/Lyrics)", self.theme.primary()),
+            ]),
+            Line::from(vec![
+                Span::styled(" [x]            ", self.theme.accent()),
+                Span::styled("Toggle Matrix Rain Background", self.theme.primary()),
             ]),
             Line::from(""),
             Line::from(vec![

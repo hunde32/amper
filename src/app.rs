@@ -1,6 +1,7 @@
 use crate::audio_visualizer::AudioVisualizer;
 use crate::cover_art::CoverArtManager;
 use crate::lyrics::LyricsManager;
+use crate::matrix_rain::MatrixRain;
 use crate::mpd_client::{MpdClient, MpdStatus, PlaybackState, SongInfo};
 use crate::ui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -57,6 +58,7 @@ pub struct App {
     pub cover_art: CoverArtManager,
     pub lyrics_mgr: LyricsManager,
     pub audio_viz: AudioVisualizer,
+    pub matrix_rain: MatrixRain,
     pub rotation_angle: f32,
     pub tick_counter: u64,
     pub clicked_button: Option<(&'static str, Instant)>,
@@ -86,6 +88,7 @@ impl App {
         let cover_art = CoverArtManager::new(music_dir);
         let lyrics_mgr = LyricsManager::new();
         let audio_viz = AudioVisualizer::new();
+        let matrix_rain = MatrixRain::new();
 
         let mut app = Self {
             should_quit: false,
@@ -105,6 +108,7 @@ impl App {
             cover_art,
             lyrics_mgr,
             audio_viz,
+            matrix_rain,
             rotation_angle: 0.0,
             tick_counter: 0,
             clicked_button: None,
@@ -196,6 +200,11 @@ impl App {
         if self.mpd_status.state == PlaybackState::Play {
             self.rotation_angle = (self.rotation_angle + dt * 1.8) % (std::f32::consts::PI * 2.0);
         }
+
+        // Advance Matrix rain animation & react to audio energy
+        let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
+        let energy = self.audio_viz.get_overall_energy();
+        self.matrix_rain.update(term_w, term_h, energy);
 
         self.tick_counter = self.tick_counter.wrapping_add(1);
         if self.tick_counter % 60 == 0 {
@@ -390,6 +399,11 @@ impl App {
             }
             KeyCode::Char('m') | KeyCode::Char('b') => {
                 self.cycle_bottom_panel();
+            }
+            KeyCode::Char('x') | KeyCode::Char('X') => {
+                self.matrix_rain.enabled = !self.matrix_rain.enabled;
+                let state = if self.matrix_rain.enabled { "Enabled" } else { "Disabled" };
+                self.set_status_message(&format!("Matrix Rain: {}", state));
             }
             KeyCode::Char('f') => {
                 self.is_favorite = !self.is_favorite;
