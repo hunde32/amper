@@ -216,20 +216,62 @@ impl<'a> Widget for TelemetryWidget<'a> {
                         "..."
                     };
 
-                    let lines = vec![
-                        Line::from(vec![
-                            Span::styled("   ", self.theme.dim()),
-                            Span::styled(prev_text, self.theme.dim()),
-                        ]),
-                        Line::from(vec![
+                    let text_w = (inner.width as usize).saturating_sub(4).max(10);
+                    let cur_sublines = crate::ui::lyrics_view::wrap_line_words(cur_text, text_w);
+                    let avail_h = inner.height as usize;
+
+                    let mut lines = Vec::new();
+                    if cur_sublines.len() == 1 {
+                        if avail_h >= 3 {
+                            lines.push(Line::from(vec![
+                                Span::styled("   ", self.theme.dim()),
+                                Span::styled(fit_one_line_words(prev_text, text_w), self.theme.dim()),
+                            ]));
+                        }
+                        lines.push(Line::from(vec![
                             Span::styled("▶  ", self.theme.accent()),
-                            Span::styled(cur_text, self.theme.primary_bold()),
-                        ]),
-                        Line::from(vec![
-                            Span::styled("   ", self.theme.dim()),
-                            Span::styled(next_text, self.theme.secondary()),
-                        ]),
-                    ];
+                            Span::styled(&cur_sublines[0], self.theme.primary_bold()),
+                        ]));
+                        if lines.len() < avail_h {
+                            lines.push(Line::from(vec![
+                                Span::styled("   ", self.theme.dim()),
+                                Span::styled(fit_one_line_words(next_text, text_w), self.theme.secondary()),
+                            ]));
+                        }
+                    } else if cur_sublines.len() == 2 {
+                        if avail_h >= 4 {
+                            lines.push(Line::from(vec![
+                                Span::styled("   ", self.theme.dim()),
+                                Span::styled(fit_one_line_words(prev_text, text_w), self.theme.dim()),
+                            ]));
+                        }
+                        lines.push(Line::from(vec![
+                            Span::styled("▶  ", self.theme.accent()),
+                            Span::styled(&cur_sublines[0], self.theme.primary_bold()),
+                        ]));
+                        lines.push(Line::from(vec![
+                            Span::styled("   ", Style::default()),
+                            Span::styled(&cur_sublines[1], self.theme.primary_bold()),
+                        ]));
+                        if lines.len() < avail_h {
+                            lines.push(Line::from(vec![
+                                Span::styled("   ", self.theme.dim()),
+                                Span::styled(fit_one_line_words(next_text, text_w), self.theme.secondary()),
+                            ]));
+                        }
+                    } else {
+                        for (r_i, chunk) in cur_sublines.into_iter().enumerate() {
+                            if lines.len() >= avail_h {
+                                break;
+                            }
+                            let bullet = if r_i == 0 { "▶  " } else { "   " };
+                            lines.push(Line::from(vec![
+                                Span::styled(bullet, if r_i == 0 { self.theme.accent() } else { Style::default() }),
+                                Span::styled(chunk, self.theme.primary_bold()),
+                            ]));
+                        }
+                    }
+
                     Paragraph::new(lines).render(inner, buf);
                 } else if self.lyrics_mgr.is_loading() {
                     let msg = Paragraph::new("Fetching synchronized lyrics from LRCLIB...")
@@ -277,3 +319,35 @@ impl<'a> Widget for TelemetryWidget<'a> {
         }
     }
 }
+
+fn fit_one_line_words(text: &str, max_width: usize) -> String {
+    let text = text.trim();
+    if text.len() <= max_width {
+        return text.to_string();
+    }
+    let target = max_width.saturating_sub(3);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut result = String::new();
+    for word in words {
+        if result.is_empty() {
+            if word.len() <= target {
+                result.push_str(word);
+            } else {
+                let mut end = target.min(word.len());
+                while end > 0 && !word.is_char_boundary(end) {
+                    end -= 1;
+                }
+                result.push_str(&word[..end]);
+                break;
+            }
+        } else if result.len() + 1 + word.len() <= target {
+            result.push(' ');
+            result.push_str(word);
+        } else {
+            break;
+        }
+    }
+    result.push_str("...");
+    result
+}
+

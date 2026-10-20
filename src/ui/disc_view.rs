@@ -163,18 +163,8 @@ impl<'a> Widget for DiscView<'a> {
             };
 
             let max_w = area.width.saturating_sub(4) as usize;
-
-            let mut display_title = title_str.to_uppercase();
-            if display_title.len() > max_w && max_w > 4 {
-                display_title.truncate(max_w - 3);
-                display_title.push_str("...");
-            }
-
-            let mut display_artist = artist_str.clone();
-            if display_artist.len() > max_w && max_w > 4 {
-                display_artist.truncate(max_w - 3);
-                display_artist.push_str("...");
-            }
+            let display_title = fit_string_safe(&title_str.to_uppercase(), max_w);
+            let display_artist = fit_string_safe(&artist_str, max_w);
 
             Paragraph::new(Line::from(Span::styled(display_title, self.theme.primary_bold())))
                 .alignment(Alignment::Center)
@@ -374,4 +364,32 @@ impl<'a> Widget for DiscView<'a> {
 fn format_time(secs: f64) -> String {
     let total = secs as u64;
     format!("{:02}:{:02}", total / 60, total % 60)
+}
+
+fn fit_string_safe(text: &str, max_width: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= max_width {
+        return text.to_string();
+    }
+    let target = max_width.saturating_sub(3);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut res = String::new();
+    for word in words {
+        if res.is_empty() {
+            if word.chars().count() <= target {
+                res.push_str(word);
+            } else {
+                let s: String = word.chars().take(target).collect();
+                res.push_str(&s);
+                break;
+            }
+        } else if res.chars().count() + 1 + word.chars().count() <= target {
+            res.push(' ');
+            res.push_str(word);
+        } else {
+            break;
+        }
+    }
+    res.push_str("...");
+    res
 }
