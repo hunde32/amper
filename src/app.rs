@@ -208,7 +208,7 @@ impl App {
         } else {
             0.0
         };
-        self.matrix_rain.update(term_w, term_h, energy);
+        self.matrix_rain.update(term_w, term_h, energy, dt);
 
         self.tick_counter = self.tick_counter.wrapping_add(1);
         if self.tick_counter % 60 == 0 {

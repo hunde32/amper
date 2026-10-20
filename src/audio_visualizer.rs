@@ -16,6 +16,7 @@ pub struct VisualizerData {
     pub peaks: [f32; NUM_BANDS],
     pub overall_energy: f32,
     pub bass_energy: f32,
+    pub groove_energy: f32,
 }
 
 impl Default for VisualizerData {
@@ -25,6 +26,7 @@ impl Default for VisualizerData {
             peaks: [0.0; NUM_BANDS],
             overall_energy: 0.0,
             bass_energy: 0.0,
+            groove_energy: 0.0,
         }
     }
 }
@@ -89,11 +91,11 @@ impl AudioVisualizer {
         self.data.lock().map(|d| d.bass_energy).unwrap_or(0.0)
     }
 
-    /// Combined reactive energy [0.0, 1.0] specifically tuned for rhythmic visual effects.
-    /// Kicks/beats drive sharp accelerations while overall audio maintains groove.
+    /// Musical groove energy [0.0, 1.0] representing sustained rhythm tempo,
+    /// holding steady across micro-gaps between beats and transitioning smoothly.
     pub fn get_reactive_energy(&self) -> f32 {
         if let Ok(d) = self.data.lock() {
-            (d.bass_energy * 0.70 + d.overall_energy * 0.30).clamp(0.0, 1.0)
+            d.groove_energy.clamp(0.0, 1.0)
         } else {
             0.0
         }
@@ -187,6 +189,7 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
     let mut dynamic_ceiling_db = -6.0f32;
     let mut smoothed_energy = 0.0f32;
     let mut smoothed_bass = 0.0f32;
+    let mut smoothed_groove = 0.0f32;
 
     let mut pcm_buffer = [0i16; FFT_SIZE];
     let mut raw_bytes = [0u8; FFT_SIZE * 2];
@@ -310,12 +313,24 @@ fn run_audio_capture_loop(data: Arc<Mutex<VisualizerData>>, shutdown: Arc<Atomic
                 smoothed_energy = (smoothed_energy * 0.88).max(0.0);
             }
 
+            // Macro musical groove energy:
+            // Holds steady across rhythmic gaps between beats (doesn't twitch on micro-variations).
+            let instant_energy = (bass_avg * 0.55 + bass_mid_avg * 0.45).clamp(0.0, 1.0);
+            if instant_energy > smoothed_groove {
+                // Smooth attack over ~200ms
+                smoothed_groove = smoothed_groove * 0.70 + instant_energy * 0.30;
+            } else {
+                // Musical tempo hold & gentle release (bridges gaps between beats so rain doesn't stutter)
+                smoothed_groove = (smoothed_groove * 0.965).max(0.0);
+            }
+
             // Update shared state
             if let Ok(mut lock) = data.lock() {
                 lock.bands = smoothed_bands;
                 lock.peaks = peak_values;
                 lock.overall_energy = smoothed_energy;
                 lock.bass_energy = smoothed_bass;
+                lock.groove_energy = smoothed_groove;
             }
 
             // Sleep ~20ms (~50 FPS visualizer sampling)
