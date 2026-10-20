@@ -119,16 +119,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         f.render_widget(toast, toast_area);
     }
 
-    // 4. Matrix Rain (Background layer on blank cells)
-    let cover_rect = if app.active_tab == ActiveTab::Player {
-        geom.cover_box_rect
-    } else {
-        ratatui::layout::Rect::default()
-    };
+    // 4. Matrix Rain (Background canvas strictly outside UI deck/buttons)
     app.matrix_rain.render(
         f.buffer_mut(),
         size,
-        cover_rect,
+        card_rect,
         app.theme.accent,
     );
 

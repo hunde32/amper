@@ -203,12 +203,25 @@ impl App {
 
         // Advance Matrix rain animation & react to audio energy
         let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
+        let geom = Self::get_cover_geometry(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: term_w,
+            height: term_h,
+        });
         let energy = if self.mpd_status.state == PlaybackState::Play {
             self.audio_viz.get_reactive_energy()
         } else {
             0.0
         };
-        self.matrix_rain.update(term_w, term_h, energy, dt);
+        self.matrix_rain.update(
+            term_w,
+            term_h,
+            geom.card_rect,
+            &self.theme.wallpaper_colors,
+            energy,
+            dt,
+        );
 
         self.tick_counter = self.tick_counter.wrapping_add(1);
         if self.tick_counter % 60 == 0 {

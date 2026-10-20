@@ -13,6 +13,7 @@ pub struct Theme {
     pub text_secondary: Color,
     pub text_dim: Color,
     pub wave_fg: Color,
+    pub wallpaper_colors: Vec<Color>,
 
     colors_file: Option<PathBuf>,
     last_modified: Option<SystemTime>,
@@ -30,6 +31,13 @@ impl Theme {
             text_secondary: Color::Gray,
             text_dim: Color::DarkGray,
             wave_fg: Color::LightBlue,
+            wallpaper_colors: vec![
+                Color::Rgb(129, 213, 205),
+                Color::Rgb(175, 201, 231),
+                Color::Rgb(176, 204, 200),
+                Color::Rgb(255, 180, 171),
+                Color::Rgb(221, 228, 226),
+            ],
 
             colors_file: None,
             last_modified: None,
@@ -77,10 +85,12 @@ impl Theme {
 
     fn parse_kitty_colors(&mut self, content: &str) {
         let mut fg = None;
+        let mut cursor = None;
         let mut color1 = None;
         let mut color2 = None;
         let mut color3 = None;
         let mut color4 = None;
+        let mut color5 = None;
         let mut color6 = None;
         let mut color7 = None;
 
@@ -91,10 +101,12 @@ impl Theme {
                 let val = parts[1];
                 match key {
                     "foreground" => fg = parse_hex_color(val),
+                    "cursor" => cursor = parse_hex_color(val),
                     "color1" => color1 = parse_hex_color(val),
                     "color2" => color2 = parse_hex_color(val),
                     "color3" => color3 = parse_hex_color(val),
                     "color4" => color4 = parse_hex_color(val),
+                    "color5" => color5 = parse_hex_color(val),
                     "color6" => color6 = parse_hex_color(val),
                     "color7" => color7 = parse_hex_color(val),
                     _ => {}
@@ -124,6 +136,19 @@ impl Theme {
             self.text_primary = c;
         }
         self.text_dim = Color::DarkGray;
+
+        // Populate wallpaper_colors palette from parsed kitty colors
+        let mut palette = Vec::new();
+        for col_opt in [color4, color2, color3, color1, color5, color6, color7, cursor, fg] {
+            if let Some(c) = col_opt {
+                if !palette.contains(&c) {
+                    palette.push(c);
+                }
+            }
+        }
+        if !palette.is_empty() {
+            self.wallpaper_colors = palette;
+        }
     }
 
     pub fn primary(&self) -> Style {
