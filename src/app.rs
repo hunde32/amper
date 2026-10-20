@@ -34,6 +34,7 @@ pub struct CoverGeometry {
     pub card_rect: ratatui::layout::Rect,
     pub cover_box_rect: ratatui::layout::Rect,
     pub inner_rect: ratatui::layout::Rect,
+    pub controls_rect: ratatui::layout::Rect,
     pub img_x: u16,
     pub img_y: u16,
     pub img_cols: u16,
@@ -203,12 +204,6 @@ impl App {
 
         // Advance Matrix rain animation & react to audio energy
         let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
-        let geom = Self::get_cover_geometry(ratatui::layout::Rect {
-            x: 0,
-            y: 0,
-            width: term_w,
-            height: term_h,
-        });
         let energy = if self.mpd_status.state == PlaybackState::Play {
             self.audio_viz.get_reactive_energy()
         } else {
@@ -217,7 +212,6 @@ impl App {
         self.matrix_rain.update(
             term_w,
             term_h,
-            geom.card_rect,
             &self.theme.wallpaper_colors,
             energy,
             dt,
@@ -593,10 +587,23 @@ impl App {
         let img_x = inner_x;
         let img_y = inner_y;
 
+        let body_h = card_height.saturating_sub(2);
+        let title_y = 1 + body_h.saturating_sub(15);
+        let controls_y = title_y + 5;
+        let cx = card_x + card_width / 2;
+        let controls_w = 46.min(card_width);
+        let controls_rect = ratatui::layout::Rect {
+            x: cx.saturating_sub(controls_w / 2),
+            y: controls_y,
+            width: controls_w,
+            height: 3,
+        };
+
         CoverGeometry {
             card_rect,
             cover_box_rect,
             inner_rect,
+            controls_rect,
             img_x,
             img_y,
             img_cols,

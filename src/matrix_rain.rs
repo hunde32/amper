@@ -9,6 +9,18 @@ const MATRIX_CHARS: &[char] = &[
     ':', '*', '<', '>', '+', '-', '=', '|',
 ];
 
+const CYBERPUNK_PALETTE: &[Color] = &[
+    Color::Rgb(129, 213, 205), // Turquoise Teal (Native Wallpaper)
+    Color::Rgb(0, 245, 212),   // Electric Neon Cyan
+    Color::Rgb(200, 166, 122), // Golden Tan / Amber (Matches screenshot controls)
+    Color::Rgb(224, 175, 104), // Warm Gold
+    Color::Rgb(80, 200, 120),  // Emerald / Matrix Green
+    Color::Rgb(138, 154, 104), // Sage / Olive Green
+    Color::Rgb(175, 201, 231), // Sky / Ice Blue (Native Wallpaper)
+    Color::Rgb(255, 180, 171), // Coral Rose (Native Wallpaper)
+    Color::Rgb(221, 228, 226), // Frosted Mint / White
+];
+
 /// Critically damped spring smoothing (standard keyframe ease-in-out trajectory).
 /// Provides smooth acceleration and deceleration with zero overshoot or abrupt jitter.
 fn smooth_damp(
@@ -66,7 +78,7 @@ impl MatrixRain {
             rng_seed: 0x9E3779B97F4A7C15,
             speed_multiplier: 0.35,
             speed_velocity: 0.0,
-            density: 0.12,
+            density: 0.65,
             density_velocity: 0.0,
         }
     }
@@ -81,26 +93,72 @@ impl MatrixRain {
         MATRIX_CHARS[idx]
     }
 
-    fn init_dormant_drop(seed: &mut u64) -> MatrixDrop {
+    fn pick_color(seed: &mut u64, wallpaper_colors: &[Color]) -> Color {
+        let r = Self::next_rand(seed) as usize;
+        // Blend native wallpaper colors with vibrant cyberpunk matrix colors
+        if !wallpaper_colors.is_empty() && (r % 3 != 0) {
+            let idx = r % wallpaper_colors.len();
+            wallpaper_colors[idx]
+        } else {
+            let idx = r % CYBERPUNK_PALETTE.len();
+            CYBERPUNK_PALETTE[idx]
+        }
+    }
+
+    fn init_drop(seed: &mut u64, height: u16, wallpaper_colors: &[Color], initial: bool) -> MatrixDrop {
+        let r = Self::next_rand(seed);
+        // Extended trail lengths so streams fill plenty of vertical rows from top to bottom!
+        let min_len = 16.max(height as usize / 2);
+        let max_len = (height as usize + 12).max(28);
+        let span = (max_len.saturating_sub(min_len) + 1).max(1);
+        let length = min_len + ((r as usize) % span);
+
+        let mut chars = Vec::with_capacity(length);
+        for _ in 0..length {
+            chars.push(Self::random_char(seed));
+        }
+
+        let color = Self::pick_color(seed, wallpaper_colors);
+
+        // 3 Translucency / depth tiers:
+        // 40% faint translucent background, 40% medium translucent, 20% vivid foreground
+        let r_depth = (r >> 8) % 10;
+        let depth = if r_depth < 4 {
+            0.35 // Faint translucent background stream
+        } else if r_depth < 8 {
+            0.65 // Soft medium translucent stream
+        } else {
+            1.00 // Crisp vivid foreground stream
+        };
+
+        let speed = 0.20 + (((r >> 4) % 10) as f32) * 0.02;
+
+        let (y, delay, active) = if initial {
+            // Stagger drops across all vertical rows on initial launch
+            let start_y = ((r >> 12) % (height as u64 + 10)) as f32;
+            (start_y, 0, (r % 10) < 7)
+        } else {
+            (0.0, ((r >> 12) % 8) as u16, true)
+        };
+
         MatrixDrop {
-            y: 0.0,
-            speed: 0.22 + ((Self::next_rand(seed) % 10) as f32) * 0.02,
-            length: 16,
-            chars: Vec::new(),
-            delay: (Self::next_rand(seed) % 30) as u16,
-            active: false,
-            color: Color::Rgb(129, 213, 205),
-            depth: 0.65,
+            y,
+            speed,
+            length,
+            chars,
+            delay,
+            active,
+            color,
+            depth,
         }
     }
 
     /// Advance drop positions with keyframe easing, multi-color wallpaper palettes,
-    /// translucent depth layers, extended row lengths, and complete isolation from UI cards.
+    /// translucent depth layers, and dense continuous full-height rows.
     pub fn update(
         &mut self,
         width: u16,
         height: u16,
-        card_rect: Rect,
         wallpaper_colors: &[Color],
         audio_energy: f32,
         dt: f32,
@@ -114,7 +172,6 @@ impl MatrixRain {
         let dt = dt.clamp(0.001, 0.1);
 
         // 1. Keyframe-Eased Speed Trajectory:
-        // Smooth ease-in when accelerating (~0.55s), smooth ease-out when slowing down (~1.80s).
         let target_speed = 0.35 + audio_energy.clamp(0.0, 1.0) * 1.85;
         let speed_smooth_time = if target_speed > self.speed_multiplier {
             0.55
@@ -130,7 +187,8 @@ impl MatrixRain {
         );
 
         // 2. Keyframe-Eased Drop Density:
-        let target_density = 0.10 + audio_energy.clamp(0.0, 1.0) * 0.20;
+        // Rich, dense screen coverage (60% to 80% active columns) matching reference design
+        let target_density = 0.60 + audio_energy.clamp(0.0, 1.0) * 0.20;
         let density_smooth_time = if target_density > self.density {
             0.70
         } else {
@@ -150,25 +208,15 @@ impl MatrixRain {
             if old_len < total_cols {
                 self.columns.reserve(total_cols - old_len);
                 for _ in old_len..total_cols {
-                    self.columns.push(Self::init_dormant_drop(&mut seed));
+                    self.columns.push(Self::init_drop(&mut seed, height, wallpaper_colors, old_len == 0));
                 }
             } else {
                 self.columns.truncate(total_cols);
             }
         }
 
-        let card_start = card_rect.x as usize;
-        let card_end = (card_rect.x + card_rect.width) as usize;
-
-        // 3. Advance all currently active background drops
-        for (col_idx, col) in self.columns.iter_mut().enumerate() {
-            // Strictly forbid any drop from existing or updating inside the UI card/buttons
-            if col_idx >= card_start && col_idx < card_end {
-                col.active = false;
-                col.delay = 999;
-                continue;
-            }
-
+        // 3. Advance all active drops
+        for col in self.columns.iter_mut() {
             if !col.active {
                 if col.delay > 0 {
                     col.delay -= 1;
@@ -185,11 +233,22 @@ impl MatrixRain {
 
             // When drop head falls past the bottom + trail length, drop has finished
             if col.y - (col.length as f32) > height as f32 {
-                col.active = false;
                 col.y = 0.0;
+                // Fast respawn (0 to 6 ticks) so rows are continuously populated with code
+                col.delay = (Self::next_rand(&mut seed) % 7) as u16;
+                // Re-randomize depth, color, and characters for continuous visual variety
+                col.color = Self::pick_color(&mut seed, wallpaper_colors);
+                let r_depth = Self::next_rand(&mut seed) % 10;
+                col.depth = if r_depth < 4 { 0.35 } else if r_depth < 8 { 0.65 } else { 1.00 };
+
+                let min_len = 16.max(height as usize / 2);
+                let max_len = (height as usize + 12).max(28);
+                let span = (max_len.saturating_sub(min_len) + 1).max(1);
+                col.length = min_len + (Self::next_rand(&mut seed) as usize % span);
                 col.chars.clear();
-                // Brief pause before this column can consider re-spawning
-                col.delay = (Self::next_rand(&mut seed) % 15) as u16;
+                for _ in 0..col.length {
+                    col.chars.push(Self::random_char(&mut seed));
+                }
             } else {
                 // Occasional subtle shimmer in the trail
                 if Self::next_rand(&mut seed) % 12 == 0 && !col.chars.is_empty() {
@@ -199,100 +258,43 @@ impl MatrixRain {
             }
         }
 
-        // 4. Calculate background columns available outside card_rect
-        let bg_cols_count = (0..total_cols)
-            .filter(|&idx| idx < card_start || idx >= card_end)
-            .count();
-        let max_active_drops = ((bg_cols_count as f32 * self.density).round() as usize).max(2);
-        let active_count = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|&(idx, c)| c.active && (idx < card_start || idx >= card_end))
-            .count();
+        // 4. Activate dormant columns to meet target density
+        let max_active_drops = ((total_cols as f32 * self.density).round() as usize).max(4);
+        let active_count = self.columns.iter().filter(|c| c.active).count();
 
-        // 5. Spawn new drops strictly in background columns if below target density
         if active_count < max_active_drops {
-            let min_gap = 1usize;
-
-            let candidates: Vec<usize> = (0..total_cols)
-                .filter(|&idx| {
-                    // Must be strictly outside the UI card
-                    if idx >= card_start && idx < card_end {
-                        return false;
-                    }
-                    if self.columns[idx].active || self.columns[idx].delay > 0 {
-                        return false;
-                    }
-                    // Check horizontal spacing: no active drop within min_gap
-                    for g in 1..=min_gap {
-                        if idx >= g && self.columns[idx - g].active {
-                            return false;
-                        }
-                        if idx + g < total_cols && self.columns[idx + g].active {
-                            return false;
-                        }
-                    }
-                    true
-                })
+            let mut candidates: Vec<usize> = (0..total_cols)
+                .filter(|&idx| !self.columns[idx].active && self.columns[idx].delay == 0)
                 .collect();
 
-            if !candidates.is_empty() {
-                let pick_idx = (Self::next_rand(&mut seed) as usize) % candidates.len();
-                let col_idx = candidates[pick_idx];
+            let deficit = max_active_drops - active_count;
+            let to_spawn = deficit.min(3);
 
-                // Generous trail length so streams have LOTS of rows cascading down
-                let min_len = (height as usize / 2).max(12);
-                let max_len = (height as usize + 6).max(22);
-                let span = (max_len.saturating_sub(min_len) + 1).max(1);
-                let length = min_len + (Self::next_rand(&mut seed) as usize % span);
-
-                let mut chars = Vec::with_capacity(length);
-                for _ in 0..length {
-                    chars.push(Self::random_char(&mut seed));
+            for _ in 0..to_spawn {
+                if candidates.is_empty() {
+                    break;
                 }
-
-                // Pick a native color from wallpaper palette
-                let color = if !wallpaper_colors.is_empty() {
-                    let c_idx = (Self::next_rand(&mut seed) as usize) % wallpaper_colors.len();
-                    wallpaper_colors[c_idx]
-                } else {
-                    Color::Rgb(129, 213, 205)
-                };
-
-                // 3 Depth / Translucency tiers:
-                // 40% faint translucent background, 40% medium translucent, 20% vivid foreground
-                let r_depth = Self::next_rand(&mut seed) % 10;
-                let depth = if r_depth < 4 {
-                    0.35 // Faint, highly translucent stream
-                } else if r_depth < 8 {
-                    0.65 // Medium translucent stream
-                } else {
-                    1.00 // Vivid foreground stream
-                };
-
-                self.columns[col_idx] = MatrixDrop {
-                    y: 0.0,
-                    speed: 0.22 + ((Self::next_rand(&mut seed) % 10) as f32) * 0.02,
-                    length,
-                    chars,
-                    delay: 0,
-                    active: true,
-                    color,
-                    depth,
-                };
+                let pick_idx = (Self::next_rand(&mut seed) as usize) % candidates.len();
+                let col_idx = candidates.swap_remove(pick_idx);
+                self.columns[col_idx] = Self::init_drop(&mut seed, height, wallpaper_colors, false);
             }
         }
 
         self.rng_seed = seed;
     }
 
-    /// Render falling matrix glyphs on blank background cells strictly outside card_rect.
+    /// Render falling matrix glyphs on blank background cells.
+    /// Strictly protects:
+    /// 1. `cover_box_rect` (album art)
+    /// 2. `controls_rect` (playback buttons row: play, next, prev, shuffle, repeat)
+    /// 3. Non-blank cells (text, borders, timestamps, scrubber)
+    /// 4. Non-reset background cells (solid button fills, badges)
     pub fn render(
         &self,
         buf: &mut Buffer,
         area: Rect,
-        card_rect: Rect,
+        cover_box_rect: Rect,
+        controls_rect: Rect,
         fallback_accent: Color,
     ) {
         if !self.enabled {
@@ -300,8 +302,6 @@ impl MatrixRain {
         }
 
         let speed_norm = ((self.speed_multiplier - 0.35) / 1.85).clamp(0.0, 1.0);
-        let card_start = card_rect.x;
-        let card_end = card_rect.x + card_rect.width;
 
         for (x_idx, col) in self.columns.iter().enumerate() {
             if !col.active || col.delay > 0 {
@@ -311,11 +311,6 @@ impl MatrixRain {
             let x = area.x + x_idx as u16;
             if x >= area.x + area.width {
                 break;
-            }
-
-            // Absolute guarantee: NEVER draw inside the UI deck width (buttons, controls, cover box)
-            if x >= card_start && x < card_end {
-                continue;
             }
 
             let (r_base, g_base, b_base) = match col.color {
@@ -334,15 +329,27 @@ impl MatrixRain {
                     continue;
                 }
                 let y = y_pos as u16;
+                let pos = Position { x, y };
 
-                // Extra safety: double-check against card_rect
-                if card_rect.contains(Position { x, y }) {
+                // 1. Cover Box Protection: never draw over album art
+                if cover_box_rect.contains(pos) {
+                    continue;
+                }
+
+                // 2. Controls Buttons Protection: never draw over or inside the button boxes
+                if controls_rect.contains(pos) {
                     continue;
                 }
 
                 let cell = &mut buf[(x, y)];
-                // Only render where the cell is currently a blank space ' '
+
+                // 3. Any non-blank cell (text, borders, timestamps, waveforms): never overwrite
                 if cell.symbol() != " " {
+                    continue;
+                }
+
+                // 4. Any styled background cell (solid play button, badges): never overwrite
+                if cell.bg != Color::Reset {
                     continue;
                 }
 
@@ -351,7 +358,7 @@ impl MatrixRain {
 
                 let (r, g, b) = if i == 0 {
                     if col.depth >= 0.85 {
-                        let flash = 170.0 + speed_norm * 65.0;
+                        let flash = 180.0 + speed_norm * 65.0;
                         (
                             ((r_base * 0.7 + flash).min(255.0)) as u8,
                             ((g_base * 0.7 + flash).min(255.0)) as u8,
@@ -359,7 +366,7 @@ impl MatrixRain {
                         )
                     } else {
                         // Translucent stream head
-                        let factor = (0.5 + col.depth * 0.45).min(1.0);
+                        let factor = (0.55 + col.depth * 0.40).min(1.0);
                         (
                             ((r_base * factor).min(255.0)) as u8,
                             ((g_base * factor).min(255.0)) as u8,
@@ -368,8 +375,8 @@ impl MatrixRain {
                     }
                 } else {
                     // Multi-layer translucency: depth 0.35 = faint translucent, 0.65 = mid, 1.0 = vivid
-                    let max_trail = (0.24 * col.depth).max(0.06);
-                    let min_trail = (0.05 * col.depth).max(0.015);
+                    let max_trail = (0.28 * col.depth).max(0.08);
+                    let min_trail = (0.06 * col.depth).max(0.02);
                     let intensity = (fade * max_trail).max(min_trail);
                     (
                         (r_base * intensity) as u8,
