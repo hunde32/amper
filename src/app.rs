@@ -1,7 +1,6 @@
 use crate::audio_visualizer::AudioVisualizer;
 use crate::cover_art::CoverArtManager;
 use crate::lyrics::LyricsManager;
-use crate::matrix_rain::MatrixRain;
 use crate::mpd_client::{MpdClient, MpdStatus, PlaybackState, SongInfo};
 use crate::ui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -34,7 +33,6 @@ pub struct CoverGeometry {
     pub card_rect: ratatui::layout::Rect,
     pub cover_box_rect: ratatui::layout::Rect,
     pub inner_rect: ratatui::layout::Rect,
-    pub controls_rect: ratatui::layout::Rect,
     pub img_x: u16,
     pub img_y: u16,
     pub img_cols: u16,
@@ -59,7 +57,6 @@ pub struct App {
     pub cover_art: CoverArtManager,
     pub lyrics_mgr: LyricsManager,
     pub audio_viz: AudioVisualizer,
-    pub matrix_rain: MatrixRain,
     pub rotation_angle: f32,
     pub tick_counter: u64,
     pub clicked_button: Option<(&'static str, Instant)>,
@@ -89,7 +86,6 @@ impl App {
         let cover_art = CoverArtManager::new(music_dir);
         let lyrics_mgr = LyricsManager::new();
         let audio_viz = AudioVisualizer::new();
-        let matrix_rain = MatrixRain::new();
 
         let mut app = Self {
             should_quit: false,
@@ -109,7 +105,6 @@ impl App {
             cover_art,
             lyrics_mgr,
             audio_viz,
-            matrix_rain,
             rotation_angle: 0.0,
             tick_counter: 0,
             clicked_button: None,
@@ -202,20 +197,7 @@ impl App {
             self.rotation_angle = (self.rotation_angle + dt * 1.8) % (std::f32::consts::PI * 2.0);
         }
 
-        // Advance Matrix rain animation & react to audio energy
-        let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
-        let energy = if self.mpd_status.state == PlaybackState::Play {
-            self.audio_viz.get_reactive_energy()
-        } else {
-            0.0
-        };
-        self.matrix_rain.update(
-            term_w,
-            term_h,
-            self.theme.accent,
-            energy,
-            dt,
-        );
+
 
         self.tick_counter = self.tick_counter.wrapping_add(1);
         if self.tick_counter % 60 == 0 {
@@ -411,11 +393,7 @@ impl App {
             KeyCode::Char('m') | KeyCode::Char('b') => {
                 self.cycle_bottom_panel();
             }
-            KeyCode::Char('x') | KeyCode::Char('X') => {
-                self.matrix_rain.enabled = !self.matrix_rain.enabled;
-                let state = if self.matrix_rain.enabled { "Enabled" } else { "Disabled" };
-                self.set_status_message(&format!("Matrix Rain: {}", state));
-            }
+
             KeyCode::Char('f') => {
                 self.is_favorite = !self.is_favorite;
                 let msg = if self.is_favorite { "Added to Liked Songs ♥" } else { "Removed from Liked Songs" };
@@ -587,23 +565,10 @@ impl App {
         let img_x = inner_x;
         let img_y = inner_y;
 
-        let body_h = card_height.saturating_sub(2);
-        let title_y = 1 + body_h.saturating_sub(15);
-        let controls_y = title_y + 5;
-        let cx = card_x + card_width / 2;
-        let controls_w = 46.min(card_width);
-        let controls_rect = ratatui::layout::Rect {
-            x: cx.saturating_sub(controls_w / 2),
-            y: controls_y,
-            width: controls_w,
-            height: 3,
-        };
-
         CoverGeometry {
             card_rect,
             cover_box_rect,
             inner_rect,
-            controls_rect,
             img_x,
             img_y,
             img_cols,

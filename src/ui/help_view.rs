@@ -71,10 +71,7 @@ impl<'a> Widget for HelpModal<'a> {
                 Span::styled(" [m / b]        ", self.theme.accent()),
                 Span::styled("Cycle Bottom Panel (Telem/Visual/Lyrics)", self.theme.primary()),
             ]),
-            Line::from(vec![
-                Span::styled(" [x]            ", self.theme.accent()),
-                Span::styled("Toggle Matrix Rain Background", self.theme.primary()),
-            ]),
+
             Line::from(""),
             Line::from(vec![
                 Span::styled(" [Tab]          ", self.theme.accent()),

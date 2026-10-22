@@ -93,6 +93,7 @@ impl AudioVisualizer {
 
     /// Musical groove energy [0.0, 1.0] representing sustained rhythm tempo,
     /// holding steady across micro-gaps between beats and transitioning smoothly.
+    #[allow(dead_code)]
     pub fn get_reactive_energy(&self) -> f32 {
         if let Ok(d) = self.data.lock() {
             d.groove_energy.clamp(0.0, 1.0)

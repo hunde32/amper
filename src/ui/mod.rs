@@ -119,19 +119,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         f.render_widget(toast, toast_area);
     }
 
-    // 4. Matrix Rain (Background canvas - renders across screen while strictly protecting cover art and buttons)
-    let (cover_rect, controls_rect) = if app.active_tab == ActiveTab::Player {
-        (geom.cover_box_rect, geom.controls_rect)
-    } else {
-        (ratatui::layout::Rect::default(), ratatui::layout::Rect::default())
-    };
-    app.matrix_rain.render(
-        f.buffer_mut(),
-        size,
-        cover_rect,
-        controls_rect,
-        app.theme.accent,
-    );
+
 
     // 5. Help modal if toggled
     if app.show_help {
