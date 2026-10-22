@@ -212,7 +212,7 @@ impl App {
         self.matrix_rain.update(
             term_w,
             term_h,
-            &self.theme.wallpaper_colors,
+            self.theme.accent,
             energy,
             dt,
         );

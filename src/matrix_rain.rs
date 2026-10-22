@@ -1,50 +1,28 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier};
+use ratatui::style::{Color, Modifier, Style};
 
+/// Fullwidth double-width characters (width = 2).
+/// In terminal emulators (e.g. Kitty), fullwidth characters render at literally
+/// double the width and fill a large, prominent font box with bold strokes.
 const MATRIX_CHARS: &[char] = &[
-    // Bold numbers (from user example: 8, 3, 2, 1, 0...)
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    // Dense ASCII symbols (from user example: $, #, %, (, !, ), ^, &, *, @)
-    '$', '#', '%', '&', '@', '?', '!', '^', '*', '+', '=', '<', '>', '~', '/', '\\', '(', ')',
-    // Strong dense letters (from user example: h, 3, ...)
-    'h', 'k', 'm', 'w', 'x', 'z', 'b', 'd', 'p', 'q', 'H', 'K', 'M', 'W', 'X', 'Z', 'B', 'R',
-    // Classic half-width Katakana
-    'ｦ', 'ｱ', 'ｳ', 'ｴ', 'ｵ', 'ｶ', 'ｷ', 'ｹ', 'ｺ', 'ｻ', 'ｼ', 'ｽ', 'ｾ', 'ｿ',
-    'ﾀ', 'ﾂ', 'ﾃ', 'ﾅ', 'ﾆ', 'ﾇ', 'ﾈ', 'ﾊ', 'ﾋ', 'ﾎ', 'ﾏ', 'ﾐ', 'ﾑ', 'ﾒ', 'ﾓ',
-    'ﾔ', 'ﾕ', 'ﾗ', 'ﾘ', 'ﾜ',
-];
-
-const CYBERPUNK_PALETTE: &[Color] = &[
-    Color::Rgb(129, 213, 205), // Turquoise Teal (Native Wallpaper)
-    Color::Rgb(0, 245, 212),   // Electric Neon Cyan
-    Color::Rgb(200, 166, 122), // Golden Tan / Amber (Matches screenshot controls)
-    Color::Rgb(224, 175, 104), // Warm Gold
-    Color::Rgb(80, 200, 120),  // Emerald / Matrix Green
-    Color::Rgb(138, 154, 104), // Sage / Olive Green
-    Color::Rgb(175, 201, 231), // Sky / Ice Blue (Native Wallpaper)
-    Color::Rgb(255, 180, 171), // Coral Rose (Native Wallpaper)
-    Color::Rgb(221, 228, 226), // Frosted Mint / White
-];
-
-const PULSE_PALETTE: &[Color] = &[
-    Color::Rgb(0, 190, 255),   // Electric Cyan-Blue (from user example)
-    Color::Rgb(0, 245, 212),   // Neon Cyan
-    Color::Rgb(255, 190, 70),  // Warm Radiant Gold
-    Color::Rgb(255, 110, 180), // Neon Rose / Hot Pink
-    Color::Rgb(60, 255, 160),  // Electric Matrix Mint
-    Color::Rgb(185, 130, 255), // Radiant Violet
-    Color::Rgb(255, 225, 120), // Vivid Champagne
+    // Fullwidth Numbers (visually twice as wide, massive font presence)
+    '０', '１', '２', '３', '４', '５', '６', '７', '８', '９',
+    // Fullwidth Symbols (dense, heavy ink fill)
+    '＃', '＄', '％', '＆', '＠', '＊', '？', '！', '＾', '＋', '＝', '＜', '＞', '（', '）', '／', '＼',
+    // Fullwidth Letters (strong, wide letterforms)
+    'ｈ', 'ｋ', 'ｍ', 'ｗ', 'ｘ', 'ｚ', 'ｂ', 'ｄ', 'ｐ', 'ｑ', 'Ｈ', 'Ｋ', 'Ｍ', 'Ｗ', 'Ｘ', 'Ｚ', 'Ｂ', 'Ｒ',
+    // Fullwidth Katakana (authentic Matrix aesthetic, large double-cell font)
+    'ア', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ケ', 'コ', 'サ', 'シ', 'ス', 'セ', 'ソ',
+    'タ', 'ツ', 'テ', 'ナ', 'ニ', 'ヌ', 'ネ', 'ハ', 'ヒ', 'ホ', 'マ', 'ミ', 'ム', 'メ', 'モ',
+    'ヤ', 'ユ', 'ラ', 'リ', 'ワ',
 ];
 
 /// Helper to extract float RGB values from Ratatui Color.
-fn color_to_rgb(c: Color, fallback: Color) -> (f32, f32, f32) {
+fn color_to_rgb(c: Color) -> (f32, f32, f32) {
     match c {
         Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
-        _ => match fallback {
-            Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
-            _ => (129.0, 213.0, 205.0),
-        },
+        _ => (129.0, 213.0, 205.0),
     }
 }
 
@@ -82,10 +60,8 @@ pub struct MatrixDrop {
     pub chars: Vec<char>,
     pub delay: u16,
     pub active: bool,
-    pub color: Color,
-    pub depth: f32, // 0.35 (faint translucent), 0.65 (mid translucent), 1.0 (vivid)
+    pub depth: f32,          // 0.35 (faint translucent), 0.65 (mid translucent), 1.0 (vivid)
     pub pulse_offset: usize, // Index along trail of radiant pulse node
-    pub pulse_color: Color,  // Vivid color for the pulse node (e.g. Electric Blue)
 }
 
 struct LightEmitter {
@@ -118,7 +94,7 @@ impl MatrixRain {
             rng_seed: 0x9E3779B97F4A7C15,
             speed_multiplier: 0.35,
             speed_velocity: 0.0,
-            density: 0.65,
+            density: 0.70,
             density_velocity: 0.0,
         }
     }
@@ -133,23 +109,11 @@ impl MatrixRain {
         MATRIX_CHARS[idx]
     }
 
-    fn pick_color(seed: &mut u64, wallpaper_colors: &[Color]) -> Color {
-        let r = Self::next_rand(seed) as usize;
-        // Blend native wallpaper colors with vibrant cyberpunk matrix colors
-        if !wallpaper_colors.is_empty() && (r % 3 != 0) {
-            let idx = r % wallpaper_colors.len();
-            wallpaper_colors[idx]
-        } else {
-            let idx = r % CYBERPUNK_PALETTE.len();
-            CYBERPUNK_PALETTE[idx]
-        }
-    }
-
-    fn init_drop(seed: &mut u64, height: u16, wallpaper_colors: &[Color], initial: bool) -> MatrixDrop {
+    fn init_drop(seed: &mut u64, height: u16, initial: bool) -> MatrixDrop {
         let r = Self::next_rand(seed);
-        // Extended trail lengths so streams fill plenty of vertical rows from top to bottom
-        let min_len = 16.max(height as usize / 2);
-        let max_len = (height as usize + 12).max(28);
+        // Generous trail lengths so the vertical gradient spans deeply down the screen
+        let min_len = 22.max(height as usize / 2);
+        let max_len = (height as usize + 24).max(36);
         let span = (max_len.saturating_sub(min_len) + 1).max(1);
         let length = min_len + ((r as usize) % span);
 
@@ -157,8 +121,6 @@ impl MatrixRain {
         for _ in 0..length {
             chars.push(Self::random_char(seed));
         }
-
-        let color = Self::pick_color(seed, wallpaper_colors);
 
         // 3 Translucency / depth tiers:
         // 40% faint translucent background, 40% medium translucent, 20% vivid foreground
@@ -174,17 +136,15 @@ impl MatrixRain {
         let speed = 0.20 + (((r >> 4) % 10) as f32) * 0.02;
 
         let (y, delay, active) = if initial {
-            // Stagger drops across all vertical rows on initial launch
+            // Stagger drops across vertical rows on initial launch
             let start_y = ((r >> 12) % (height as u64 + 10)) as f32;
             (start_y, 0, (r % 10) < 7)
         } else {
             (0.0, ((r >> 12) % 8) as u16, true)
         };
 
-        // Radiant pulse node along the stream trail (acts as a localized VFX point light emitter)
-        let pulse_offset = 3 + ((r >> 16) as usize % 6);
-        let pulse_idx = ((r >> 20) as usize) % PULSE_PALETTE.len();
-        let pulse_color = PULSE_PALETTE[pulse_idx];
+        // Radiant pulse node along the stream trail
+        let pulse_offset = 4 + ((r >> 16) as usize % 7);
 
         MatrixDrop {
             y,
@@ -193,28 +153,27 @@ impl MatrixRain {
             chars,
             delay,
             active,
-            color,
             depth,
             pulse_offset,
-            pulse_color,
         }
     }
 
-    /// Advance drop positions with keyframe easing, multi-color wallpaper palettes,
-    /// translucent depth layers, and dense continuous full-height rows.
+    /// Advance drop positions with keyframe easing, single unified wallpaper color,
+    /// large fullwidth streams (2 cells wide), and deep continuous vertical trails.
     pub fn update(
         &mut self,
         width: u16,
         height: u16,
-        wallpaper_colors: &[Color],
+        _wallpaper_accent: Color,
         audio_energy: f32,
         dt: f32,
     ) {
-        if !self.enabled || width == 0 || height == 0 {
+        if !self.enabled || width < 4 || height < 4 {
             return;
         }
 
-        let total_cols = width as usize;
+        // Each stream is 2 terminal columns wide for large double-cell font size
+        let total_slots = (width as usize / 2).max(1);
         let mut seed = self.rng_seed;
         let dt = dt.clamp(0.001, 0.1);
 
@@ -234,8 +193,7 @@ impl MatrixRain {
         );
 
         // 2. Keyframe-Eased Drop Density:
-        // Rich, dense screen coverage (60% to 80% active columns) matching reference design
-        let target_density = 0.60 + audio_energy.clamp(0.0, 1.0) * 0.20;
+        let target_density = 0.65 + audio_energy.clamp(0.0, 1.0) * 0.20;
         let density_smooth_time = if target_density > self.density {
             0.70
         } else {
@@ -249,16 +207,16 @@ impl MatrixRain {
             dt,
         );
 
-        // Ensure columns vector matches terminal width
-        if self.columns.len() != total_cols {
+        // Ensure columns vector matches stream slots count
+        if self.columns.len() != total_slots {
             let old_len = self.columns.len();
-            if old_len < total_cols {
-                self.columns.reserve(total_cols - old_len);
-                for _ in old_len..total_cols {
-                    self.columns.push(Self::init_drop(&mut seed, height, wallpaper_colors, old_len == 0));
+            if old_len < total_slots {
+                self.columns.reserve(total_slots - old_len);
+                for _ in old_len..total_slots {
+                    self.columns.push(Self::init_drop(&mut seed, height, old_len == 0));
                 }
             } else {
-                self.columns.truncate(total_cols);
+                self.columns.truncate(total_slots);
             }
         }
 
@@ -281,19 +239,14 @@ impl MatrixRain {
             // When drop head falls past the bottom + trail length, drop has finished
             if col.y - (col.length as f32) > height as f32 {
                 col.y = 0.0;
-                // Fast respawn (0 to 6 ticks) so rows are continuously populated with code
                 col.delay = (Self::next_rand(&mut seed) % 7) as u16;
-                // Re-randomize depth, color, pulse node, and characters for continuous visual variety
-                col.color = Self::pick_color(&mut seed, wallpaper_colors);
                 let r_depth = Self::next_rand(&mut seed) % 10;
                 col.depth = if r_depth < 4 { 0.35 } else if r_depth < 8 { 0.65 } else { 1.00 };
 
-                col.pulse_offset = 3 + (Self::next_rand(&mut seed) as usize % 6);
-                let p_idx = (Self::next_rand(&mut seed) as usize) % PULSE_PALETTE.len();
-                col.pulse_color = PULSE_PALETTE[p_idx];
+                col.pulse_offset = 4 + (Self::next_rand(&mut seed) as usize % 7);
 
-                let min_len = 16.max(height as usize / 2);
-                let max_len = (height as usize + 12).max(28);
+                let min_len = 22.max(height as usize / 2);
+                let max_len = (height as usize + 24).max(36);
                 let span = (max_len.saturating_sub(min_len) + 1).max(1);
                 col.length = min_len + (Self::next_rand(&mut seed) as usize % span);
                 col.chars.clear();
@@ -310,11 +263,11 @@ impl MatrixRain {
         }
 
         // 4. Activate dormant columns to meet target density
-        let max_active_drops = ((total_cols as f32 * self.density).round() as usize).max(4);
+        let max_active_drops = ((total_slots as f32 * self.density).round() as usize).max(4);
         let active_count = self.columns.iter().filter(|c| c.active).count();
 
         if active_count < max_active_drops {
-            let mut candidates: Vec<usize> = (0..total_cols)
+            let mut candidates: Vec<usize> = (0..total_slots)
                 .filter(|&idx| !self.columns[idx].active && self.columns[idx].delay == 0)
                 .collect();
 
@@ -327,7 +280,7 @@ impl MatrixRain {
                 }
                 let pick_idx = (Self::next_rand(&mut seed) as usize) % candidates.len();
                 let col_idx = candidates.swap_remove(pick_idx);
-                self.columns[col_idx] = Self::init_drop(&mut seed, height, wallpaper_colors, false);
+                self.columns[col_idx] = Self::init_drop(&mut seed, height, false);
             }
         }
 
@@ -336,9 +289,10 @@ impl MatrixRain {
 
     /// Render falling matrix glyphs on blank background cells.
     /// Features:
-    /// - 2D VFX Global Illumination (GI) radiance field with chromatic bloom and smooth distance falloff
-    /// - Radiant pulse nodes (e.g. Electric Blue point lights illuminating surrounding characters)
-    /// - Bold typography modifier for head and illuminated characters (crisper, larger visual font weight)
+    /// - Double-width fullwidth characters (visually twice as wide, huge font appearance)
+    /// - Strictly ONE unified color from the user's wallpaper (no multi-color confusion)
+    /// - Massive, expansive Global Illumination (GI) radiance field with silky-smooth cosine gradient
+    /// - Long, continuous multi-stage vertical trail gradient
     /// - Strictly protects `cover_box_rect`, `controls_rect`, text cells, and styled button backgrounds
     pub fn render(
         &self,
@@ -346,67 +300,72 @@ impl MatrixRain {
         area: Rect,
         cover_box_rect: Rect,
         controls_rect: Rect,
-        fallback_accent: Color,
+        wallpaper_accent: Color,
     ) {
-        if !self.enabled || area.width == 0 || area.height == 0 {
+        if !self.enabled || area.width < 4 || area.height < 4 {
             return;
         }
 
-        let width = area.width as usize;
-        let height = area.height as usize;
+        let term_w = area.width as usize;
+        let term_h = area.height as usize;
+        let num_slots = term_w / 2;
         let speed_norm = ((self.speed_multiplier - 0.35) / 1.85).clamp(0.0, 1.0);
 
-        // ── Phase 1: Collect all VFX Light Emitters (Drop Heads + Radiant Pulse Nodes) ──
+        // Single unified wallpaper accent color (e.g. #81d5cd turquoise teal)
+        let (r_base, g_base, b_base) = color_to_rgb(wallpaper_accent);
+
+        // ── Phase 1: Collect VFX Light Emitters (Drop Heads + Radiant Pulse Nodes) ──
         let mut emitters = Vec::with_capacity(self.columns.len() * 2);
 
-        for (x_idx, col) in self.columns.iter().enumerate() {
-            if !col.active || col.delay > 0 || x_idx >= width {
+        for (slot_idx, col) in self.columns.iter().enumerate() {
+            if !col.active || col.delay > 0 || slot_idx >= num_slots {
                 continue;
             }
 
-            let (r_base, g_base, b_base) = color_to_rgb(col.color, fallback_accent);
+            // Center of the 2-cell wide stream
+            let x_center = slot_idx * 2 + 1;
 
             // 1. Drop Head Emitter:
             let head_y = col.y.floor() as isize;
-            if head_y >= 0 && head_y < height as isize {
+            if head_y >= 0 && head_y < term_h as isize {
                 let intensity = if col.depth >= 0.85 {
-                    0.95 + speed_norm * 0.45
+                    1.30 + speed_norm * 0.60
                 } else {
-                    0.60 * col.depth
+                    0.85 * col.depth
                 };
                 emitters.push(LightEmitter {
-                    x: x_idx,
+                    x: x_center,
                     y: head_y as usize,
                     r: r_base,
                     g: g_base,
                     b: b_base,
                     intensity,
-                    radius_x: 2.6,
-                    radius_y: 4.0,
+                    // Expansive light radius (gradient looks much bigger)
+                    radius_x: 9.5,
+                    radius_y: 15.5,
                 });
             }
 
-            // 2. Radiant Pulse Node Emitter (like the blue '2' in the reference example):
+            // 2. Radiant Pulse Node Emitter:
             if col.pulse_offset < col.length {
                 let pulse_y = (col.y - col.pulse_offset as f32).floor() as isize;
-                if pulse_y >= 0 && pulse_y < height as isize {
-                    let (pr, pg, pb) = color_to_rgb(col.pulse_color, fallback_accent);
+                if pulse_y >= 0 && pulse_y < term_h as isize {
                     emitters.push(LightEmitter {
-                        x: x_idx,
+                        x: x_center,
                         y: pulse_y as usize,
-                        r: pr,
-                        g: pg,
-                        b: pb,
-                        intensity: 0.90 * col.depth,
-                        radius_x: 2.5,
-                        radius_y: 3.8,
+                        r: r_base,
+                        g: g_base,
+                        b: b_base,
+                        intensity: 1.05 * col.depth,
+                        radius_x: 8.5,
+                        radius_y: 13.5,
                     });
                 }
             }
         }
 
         // ── Phase 2: Compute 2D Global Illumination Radiance Field ───────────────
-        let grid_size = width * height;
+        let grid_size = term_w * term_h;
         let mut light_r = vec![0.0f32; grid_size];
         let mut light_g = vec![0.0f32; grid_size];
         let mut light_b = vec![0.0f32; grid_size];
@@ -416,9 +375,9 @@ impl MatrixRain {
             let rx = em.radius_x;
             let ry = em.radius_y;
             let min_x = em.x.saturating_sub(rx.ceil() as usize);
-            let max_x = (em.x + rx.ceil() as usize).min(width.saturating_sub(1));
+            let max_x = (em.x + rx.ceil() as usize).min(term_w.saturating_sub(1));
             let min_y = em.y.saturating_sub(ry.ceil() as usize);
-            let max_y = (em.y + ry.ceil() as usize).min(height.saturating_sub(1));
+            let max_y = (em.y + ry.ceil() as usize).min(term_h.saturating_sub(1));
 
             for gx in min_x..=max_x {
                 let dx = (gx as f32 - em.x as f32).abs() / rx;
@@ -427,10 +386,10 @@ impl MatrixRain {
                     let dist_sq = dx * dx + dy * dy;
                     if dist_sq < 1.0 {
                         let dist = dist_sq.sqrt();
-                        // Smooth quadratic falloff (VFX light attenuation)
-                        let falloff = (1.0 - dist) * (1.0 - dist);
+                        // Cosine-squared falloff gives a broad, luminous core and a silky-smooth outer gradient
+                        let falloff = ((1.0 - dist) * std::f32::consts::FRAC_PI_2).sin().powi(2);
                         let contrib = em.intensity * falloff;
-                        let idx = gy * width + gx;
+                        let idx = gy * term_w + gx;
                         light_r[idx] += em.r * contrib;
                         light_g[idx] += em.g * contrib;
                         light_b[idx] += em.b * contrib;
@@ -440,19 +399,18 @@ impl MatrixRain {
             }
         }
 
-        // ── Phase 3: Render Matrix Rain with Diffuse Color Bleed & Bold Weights ───
-        for (x_idx, col) in self.columns.iter().enumerate() {
+        // ── Phase 3: Render Matrix Rain with Double-Width Glyphs & Expansive Gradient ──
+        for (slot_idx, col) in self.columns.iter().enumerate() {
             if !col.active || col.delay > 0 {
                 continue;
             }
 
-            let x = area.x + x_idx as u16;
-            if x >= area.x + area.width {
+            let x0 = area.x + (slot_idx * 2) as u16;
+            let x1 = x0 + 1;
+            if x1 >= area.x + area.width {
                 break;
             }
 
-            let (r_base, g_base, b_base) = color_to_rgb(col.color, fallback_accent);
-            let (pr, pg, pb) = color_to_rgb(col.pulse_color, fallback_accent);
             let head_y = col.y.floor() as isize;
 
             for (i, &ch) in col.chars.iter().enumerate().take(col.length) {
@@ -461,31 +419,33 @@ impl MatrixRain {
                     continue;
                 }
                 let y = y_pos as u16;
-                let pos = Position { x, y };
+                let pos0 = Position { x: x0, y };
+                let pos1 = Position { x: x1, y };
 
                 // 1. Cover Box Protection: never draw over album art
-                if cover_box_rect.contains(pos) {
+                if cover_box_rect.contains(pos0) || cover_box_rect.contains(pos1) {
                     continue;
                 }
 
                 // 2. Controls Buttons Protection: never draw over or inside the button boxes
-                if controls_rect.contains(pos) {
+                if controls_rect.contains(pos0) || controls_rect.contains(pos1) {
                     continue;
                 }
 
-                let cell = &mut buf[(x, y)];
+                let cell0 = &buf[(x0, y)];
+                let cell1 = &buf[(x1, y)];
 
                 // 3. Any non-blank cell (text, borders, timestamps, waveforms): never overwrite
-                if cell.symbol() != " " {
+                if cell0.symbol() != " " || cell1.symbol() != " " {
                     continue;
                 }
 
                 // 4. Any styled background cell (solid play button, badges): never overwrite
-                if cell.bg != Color::Reset {
+                if cell0.bg != Color::Reset || cell1.bg != Color::Reset {
                     continue;
                 }
 
-                let grid_idx = (y - area.y) as usize * width + (x - area.x) as usize;
+                let grid_idx = (y - area.y) as usize * term_w + (x0 - area.x) as usize;
                 let gi_r = light_r.get(grid_idx).copied().unwrap_or(0.0);
                 let gi_g = light_g.get(grid_idx).copied().unwrap_or(0.0);
                 let gi_b = light_b.get(grid_idx).copied().unwrap_or(0.0);
@@ -497,15 +457,15 @@ impl MatrixRain {
                 let (r, g, b, modifier) = if is_head {
                     let modifier = Modifier::BOLD;
                     if col.depth >= 0.85 {
-                        let flash = 185.0 + speed_norm * 65.0;
+                        let flash = 200.0 + speed_norm * 55.0;
                         (
-                            ((r_base * 0.7 + flash).min(255.0)) as u8,
-                            ((g_base * 0.7 + flash).min(255.0)) as u8,
-                            ((b_base * 0.7 + flash).min(255.0)) as u8,
+                            ((r_base * 0.50 + flash).min(255.0)) as u8,
+                            ((g_base * 0.50 + flash).min(255.0)) as u8,
+                            ((b_base * 0.50 + flash).min(255.0)) as u8,
                             modifier,
                         )
                     } else {
-                        let factor = (0.60 + col.depth * 0.40).min(1.0);
+                        let factor = (0.70 + col.depth * 0.30).min(1.0);
                         (
                             ((r_base * factor).min(255.0)) as u8,
                             ((g_base * factor).min(255.0)) as u8,
@@ -514,47 +474,52 @@ impl MatrixRain {
                         )
                     }
                 } else if is_pulse {
-                    // Luminous pulse node: vivid color (e.g. Electric Blue '2')
+                    // Luminous pulse node (unified wallpaper accent with extra glow boost)
                     let modifier = Modifier::BOLD;
+                    let pulse_boost = 75.0;
                     (
-                        ((pr * 0.85 + 40.0).min(255.0)) as u8,
-                        ((pg * 0.85 + 40.0).min(255.0)) as u8,
-                        ((pb * 0.85 + 40.0).min(255.0)) as u8,
+                        ((r_base * 0.85 + pulse_boost).min(255.0)) as u8,
+                        ((g_base * 0.85 + pulse_boost).min(255.0)) as u8,
+                        ((b_base * 0.85 + pulse_boost).min(255.0)) as u8,
                         modifier,
                     )
                 } else {
-                    // Trail characters: smooth fade from head to tail + Global Illumination bleed
-                    let fade = 1.0 - (i as f32 / col.length as f32);
-                    let max_trail = (0.28 * col.depth).max(0.08);
-                    let min_trail = (0.06 * col.depth).max(0.02);
-                    let intensity = (fade * max_trail).max(min_trail);
+                    // Trail characters: smooth, expansive gradient spanning up to 40+ rows
+                    let t = i as f32 / col.length as f32;
+                    let fade = (1.0 - t).max(0.0);
+                    let curve = fade.powf(1.4);
+                    let max_trail = (0.55 * col.depth).max(0.18);
+                    let min_trail = (0.04 * col.depth).max(0.015);
+                    let intensity = (curve * max_trail).max(min_trail);
 
                     let r_trail = r_base * intensity;
                     let g_trail = g_base * intensity;
                     let b_trail = b_base * intensity;
 
-                    // Diffuse Global Illumination: smooth color wash blending into base color
-                    let gi_bleed = 0.75;
+                    // Diffuse Global Illumination: broad soft color wash
+                    let gi_bleed = 0.85;
                     let final_r = ((r_trail + gi_r * gi_bleed).min(255.0)) as u8;
                     let final_g = ((g_trail + gi_g * gi_bleed).min(255.0)) as u8;
                     let final_b = ((b_trail + gi_b * gi_bleed).min(255.0)) as u8;
 
-                    // Typographic bold weighting when illuminated by GI, giving a crisper/larger font feel
-                    let modifier = if gi_energy > 0.22 {
+                    let modifier = if i < 10 || gi_energy > 0.12 {
                         Modifier::BOLD
-                    } else if col.depth <= 0.35 && gi_energy < 0.08 && i > 3 {
+                    } else if col.depth <= 0.35 && i > 15 {
                         Modifier::DIM
                     } else {
-                        Modifier::empty()
+                        Modifier::BOLD
                     };
 
                     (final_r, final_g, final_b, modifier)
                 };
 
-                cell.set_char(ch);
-                cell.set_fg(Color::Rgb(r, g, b));
-                cell.set_bg(Color::Reset); // 100% background transparency to terminal wallpaper
-                cell.modifier = modifier;
+                let style = Style::default()
+                    .fg(Color::Rgb(r, g, b))
+                    .bg(Color::Reset)
+                    .add_modifier(modifier);
+
+                // Render double-width fullwidth glyph: sets (x0, y) to ch and (x1, y) to ""
+                buf.set_string(x0, y, ch.to_string(), style);
             }
         }
     }
